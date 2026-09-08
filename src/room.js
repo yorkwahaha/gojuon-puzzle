@@ -29,16 +29,19 @@ export function publicGameOrigin() {
   return PUBLIC_GAME_ORIGIN;
 }
 
+export function gameOrigin() {
+  if (isLoopbackHost()) return publicGameOrigin();
+  const url = new URL(window.location.href);
+  const path = url.pathname.replace(/\/teacher\.html$/i, '/').replace(/\/index\.html$/i, '/');
+  return `${url.origin}${path.replace(/\/+$/, '')}`;
+}
+
 export function linksFor(room) {
-  const origin = (isLoopbackHost() ? publicGameOrigin() : window.location.origin + window.location.pathname.replace(/\/index\.html$/, ''))
-    .replace(/\/+$/, '');
+  const origin = gameOrigin();
   const student = `${origin}/?room=${encodeURIComponent(room)}`;
-  const local = new URL(window.location.href);
-  local.hash = '';
-  local.search = '';
-  local.searchParams.set('room', room);
-  local.searchParams.set('watch', '1');
-  return { student, teacher: local.toString() };
+  const teacher = new URL('teacher.html', `${origin}/`);
+  teacher.searchParams.set('room', room);
+  return { student, teacher: teacher.toString() };
 }
 
 export function roomApiBase() {
@@ -140,16 +143,63 @@ export async function createRoom() {
   return session.code;
 }
 
+function endedKey(code) {
+  return `${STUDENT_KEY}:ended:${code}`;
+}
+
+export function markRoomEnded(code) {
+  try {
+    sessionStorage.setItem(endedKey(code), '1');
+  } catch {
+    // ignore
+  }
+}
+
+export function isRoomEnded(code) {
+  try {
+    return sessionStorage.getItem(endedKey(code)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+const joining = new Map();
+
 async function joinRoom(code) {
   const existing = readStudentToken(code);
   if (existing) return existing;
-  const result = await api(`/rooms/${code}/join`, { method: 'POST' });
-  if (!result.ok) {
-    const error = result.data?.error || 'join_failed';
-    throw Object.assign(new Error(error), { code: error, status: result.status });
+  if (joining.has(code)) return joining.get(code);
+  const request = (async () => {
+    const result = await api(`/rooms/${code}/join`, { method: 'POST' });
+    if (!result.ok) {
+      const error = result.data?.error || 'join_failed';
+      if (error === 'ended') markRoomEnded(code);
+      throw Object.assign(new Error(error), { code: error, status: result.status });
+    }
+    writeStudentToken(code, result.data.studentToken);
+    return result.data.studentToken;
+  })();
+  joining.set(code, request);
+  try {
+    return await request;
+  } finally {
+    joining.delete(code);
   }
-  writeStudentToken(code, result.data.studentToken);
-  return result.data.studentToken;
+}
+
+export async function endRoom(room) {
+  const session = readTeacherSession();
+  if (!session || session.code !== room) {
+    throw Object.assign(new Error('no_session'), { code: 'no_session' });
+  }
+  const result = await api(`/rooms/${room}/end`, { method: 'POST', token: session.teacherToken });
+  if (!result.ok) {
+    throw Object.assign(new Error(result.data?.error || 'end_failed'), {
+      code: result.data?.error,
+      status: result.status,
+    });
+  }
+  return result.data;
 }
 
 export async function patchRoom(room, data) {
@@ -169,10 +219,22 @@ export async function patchRoom(room, data) {
     }
     token = await joinRoom(room);
     const retry = await api(`/rooms/${room}/snapshot`, { method: 'PUT', token, body: next });
-    if (!retry.ok) throw new Error(retry.data?.error || 'put_failed');
+    if (!retry.ok) {
+      const error = retry.data?.error || 'put_failed';
+      throw Object.assign(new Error(error), { code: error, status: retry.status });
+    }
+    if (retry.data?.ended) markRoomEnded(room);
     return retry.data;
   }
-  if (!result.ok) throw new Error(result.data?.error || 'put_failed');
+  if (result.status === 409 && result.data?.error === 'ended') {
+    markRoomEnded(room);
+    throw Object.assign(new Error('ended'), { code: 'ended', status: 409 });
+  }
+  if (!result.ok) {
+    const error = result.data?.error || 'put_failed';
+    throw Object.assign(new Error(error), { code: error, status: result.status });
+  }
+  if (result.data?.ended) markRoomEnded(room);
   return result.data;
 }
 

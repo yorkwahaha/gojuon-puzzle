@@ -468,7 +468,9 @@ export default function PlayBoard({
       </svg>
 
       <header className="hud">
-        <button className="ghost-btn" type="button" onClick={onExit}>{spectate ? '關閉觀戰' : '離開'}</button>
+        {spectate ? null : (
+          <button className="ghost-btn" type="button" onClick={onExit}>離開</button>
+        )}
         {spectate && onCopyLink ? (
           <button className="ghost-btn" type="button" onClick={onCopyLink}>複製學生連結</button>
         ) : null}
@@ -653,7 +655,9 @@ export default function PlayBoard({
               <p className="stamp">完</p>
               <h2>整張圖揭開了</h2>
               <p>{formatTime(elapsed)} · {puzzle.name} · {size.label} · 誤放 {mistakesView} 次</p>
-              <button className="start-btn" type="button" onClick={onExit}>{spectate ? '關閉觀戰' : '回主頁'}</button>
+              {spectate ? null : (
+                <button className="start-btn" type="button" onClick={onExit}>回主頁</button>
+              )}
             </div>
           ) : (
             <p className="gallery-hint">點擊畫面繼續</p>

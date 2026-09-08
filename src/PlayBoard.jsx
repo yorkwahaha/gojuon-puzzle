@@ -12,8 +12,9 @@ import {
   seeded,
   shuffle,
 } from './jigsaw.js';
-import { playComplete, playPickup, playSnap, resumeBgm, setBgmMuted, speakKana } from './audio.js';
+import { playComplete, playPickup, playSnap, primeKana, resumeBgm, setBgmMuted, speakKana } from './audio.js';
 import { formatTime, loadPrefs, recordLevelBest, savePrefs } from './storage.js';
+import { playSnapshot } from './room.js';
 import Fireworks from './Fireworks.jsx';
 
 function JigStroke({ d }) {
@@ -46,7 +47,15 @@ function answerOf(cell, mode) {
   return glyphFor(cell.key, mode.answer);
 }
 
-export default function PlayBoard({ config, onExit }) {
+export default function PlayBoard({
+  config,
+  onExit,
+  spectate = false,
+  liveState = null,
+  onLiveState,
+  watching = false,
+  onCopyLink,
+}) {
   const { modeId, chartId, puzzle, sizeId, seed } = config;
   const mode = MODE_BY_ID[modeId];
   const size = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
@@ -67,6 +76,7 @@ export default function PlayBoard({ config, onExit }) {
 
   const stageRef = useRef(null);
   const trackRef = useRef(null);
+  const barRef = useRef(null);
   const panRef = useRef(null);
   const ignoreSlotClick = useRef(false);
   const [dragging, setDragging] = useState(null);
@@ -89,10 +99,19 @@ export default function PlayBoard({ config, onExit }) {
     return off;
   });
   const [showMenu, setShowMenu] = useState(false);
+  const [trayScroll, setTrayScroll] = useState({ left: 0, span: 1, view: 1 });
   const galleryAt = useRef(0);
+  const wallStartedAt = useRef(Date.now());
 
-  const remaining = trayOrder.filter((cell) => !placed.has(cell.id));
-  const complete = placed.size === cells.length && cells.length > 0;
+  const placedView = spectate ? new Set(liveState?.placed || []) : placed;
+  const remaining = trayOrder.filter((cell) => !placedView.has(cell.id));
+  const complete = placedView.size === cells.length && cells.length > 0;
+  const selectedView = spectate ? cells.find((item) => item.id === liveState?.selected) || null : selected;
+  const focusView = spectate ? cells.find((item) => item.id === liveState?.focusSlot) || null : focusSlot;
+  const mistakesView = spectate ? liveState?.mistakes || 0 : mistakes;
+  const wrongView = spectate ? liveState?.wrongId ?? null : wrongId;
+  const wrongPieceView = spectate ? liveState?.wrongPieceId ?? null : wrongPieceId;
+  const doneView = spectate ? liveState?.phase === 'done' : done;
 
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -114,12 +133,19 @@ export default function PlayBoard({ config, onExit }) {
   }, []);
 
   useEffect(() => {
-    if (done) return undefined;
-    const tick = () => setElapsed(performance.now() - startedAt.current);
+    if (doneView) return undefined;
+    const tick = () => {
+      if (spectate) {
+        const start = liveState?.startedAt;
+        setElapsed(start ? Math.max(0, Date.now() - start) : 0);
+        return;
+      }
+      setElapsed(performance.now() - startedAt.current);
+    };
     tick();
     const id = window.setInterval(tick, 80);
     return () => window.clearInterval(id);
-  }, [done]);
+  }, [doneView, liveState?.startedAt, spectate]);
 
   const cell = Math.min(stage.w / cols, stage.h / rows);
   const frame = { w: cell * cols, h: cell * rows };
@@ -161,22 +187,60 @@ export default function PlayBoard({ config, onExit }) {
   }, [puzzle.url]);
 
   useEffect(() => {
+    if (spectate) return undefined;
     resumeBgm();
-  }, []);
+    return undefined;
+  }, [spectate]);
 
   useEffect(() => () => {
     if (wrongTimer.current) window.clearTimeout(wrongTimer.current);
   }, []);
 
+  useLayoutEffect(() => {
+    const track = trackRef.current;
+    if (!track) return undefined;
+    const measure = () => {
+      setTrayScroll({
+        left: track.scrollLeft,
+        span: Math.max(track.scrollWidth, 1),
+        view: Math.max(track.clientWidth, 1),
+      });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(track);
+    track.addEventListener('scroll', measure, { passive: true });
+    return () => {
+      observer.disconnect();
+      track.removeEventListener('scroll', measure);
+    };
+  }, [remaining.length]);
+
   useEffect(() => {
-    if (!complete || done) return undefined;
+    if (spectate || !complete || done) return undefined;
     const ms = performance.now() - startedAt.current;
     setElapsed(ms);
     recordLevelBest(puzzle.id, sizeId, ms);
     playComplete();
     setDone(true);
     galleryAt.current = performance.now();
-  }, [complete, done]);
+  }, [complete, done, puzzle.id, sizeId, spectate]);
+
+  useEffect(() => {
+    if (!onLiveState || spectate) return undefined;
+    onLiveState(playSnapshot({
+      config,
+      placed,
+      mistakes,
+      selected: selected?.id ?? null,
+      focusSlot: focusSlot?.id ?? null,
+      wrongId,
+      wrongPieceId,
+      startedAt: wallStartedAt.current,
+      done: done || complete,
+    }));
+    return undefined;
+  }, [complete, config, done, focusSlot, mistakes, onLiveState, placed, selected, spectate, wrongId, wrongPieceId]);
 
   function speak(cellData) {
     speakKana(cellData.key);
@@ -210,7 +274,7 @@ export default function PlayBoard({ config, onExit }) {
   }
 
   function onSlotClick(slot) {
-    if (ignoreSlotClick.current) return;
+    if (spectate || ignoreSlotClick.current) return;
     if (!slot.cell || placed.has(slot.cell.id)) return;
     if (selected) {
       place(selected, slot.cell);
@@ -247,6 +311,7 @@ export default function PlayBoard({ config, onExit }) {
   }
 
   function onPiecePointerDown(event, cellData) {
+    if (spectate) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.stopPropagation();
     event.preventDefault();
@@ -268,6 +333,7 @@ export default function PlayBoard({ config, onExit }) {
     window.addEventListener('pointerup', pan.up, { capture: true });
     window.addEventListener('pointercancel', pan.up, { capture: true });
     playPickup();
+    primeKana(cellData.key);
     setSelected(cellData);
     setDragging({ cell: cellData, x: event.clientX, y: event.clientY });
   }
@@ -314,6 +380,37 @@ export default function PlayBoard({ config, onExit }) {
     trackRef.current?.scrollBy({ left: dir * Math.min(320, stage.w * 0.4), behavior: 'smooth' });
   }
 
+  function scrollFromBarX(clientX) {
+    const bar = barRef.current;
+    const track = trackRef.current;
+    if (!bar || !track) return;
+    const box = bar.getBoundingClientRect();
+    const maxScroll = track.scrollWidth - track.clientWidth;
+    if (maxScroll <= 0) return;
+    const thumbW = Math.max(48, (track.clientWidth / track.scrollWidth) * box.width);
+    const maxX = Math.max(1, box.width - thumbW);
+    const x = Math.min(maxX, Math.max(0, clientX - box.left - thumbW / 2));
+    track.scrollLeft = (x / maxX) * maxScroll;
+  }
+
+  function onBarPointerDown(event) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    scrollFromBarX(event.clientX);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // pointer may already have ended
+    }
+  }
+
+  function onBarPointerMove(event) {
+    if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) return;
+    event.preventDefault();
+    scrollFromBarX(event.clientX);
+  }
+
   function onTrackPointerDown(event) {
     if (event.target.closest('.chip')) return;
     if (panRef.current?.type === 'piece') return;
@@ -351,9 +448,15 @@ export default function PlayBoard({ config, onExit }) {
   const fontScale = mode.answer === 'roma' || mode.prompt === 'roma'
     ? Math.max(11, Math.min(cell * 0.28, 22))
     : Math.max(14, Math.min(cell * 0.38, 32));
+  const trayOverflow = trayScroll.span > trayScroll.view + 2;
+  const thumbWidthPct = Math.min(100, Math.max((48 / Math.max(trayScroll.view, 1)) * 100, (trayScroll.view / trayScroll.span) * 100));
+  const thumbTravel = 100 - thumbWidthPct;
+  const thumbLeftPct = trayOverflow
+    ? (trayScroll.left / (trayScroll.span - trayScroll.view)) * thumbTravel
+    : 0;
 
   return (
-    <section className="play">
+    <section className={`play${spectate ? ' is-spectate' : ''}`}>
       <svg className="clip-defs" aria-hidden="true">
         <defs>
           {slots.map((slot) => (
@@ -365,25 +468,33 @@ export default function PlayBoard({ config, onExit }) {
       </svg>
 
       <header className="hud">
-        <button className="ghost-btn" type="button" onClick={onExit}>離開</button>
-        <button
-          className={`icon-btn${bgmOff ? ' is-off' : ''}`}
-          type="button"
-          onClick={toggleBgm}
-          aria-label={bgmOff ? '開啟配樂' : '關閉配樂'}
-          title={bgmOff ? '開啟配樂' : '關閉配樂'}
-        >
-          <SpeakerIcon off={bgmOff} />
-        </button>
+        <button className="ghost-btn" type="button" onClick={onExit}>{spectate ? '關閉觀戰' : '離開'}</button>
+        {spectate && onCopyLink ? (
+          <button className="ghost-btn" type="button" onClick={onCopyLink}>複製學生連結</button>
+        ) : null}
+        {spectate || watching ? (
+          <span className="watch-seal" aria-label={spectate ? '觀戰中' : '老師觀看中'}>觀</span>
+        ) : null}
+        {spectate ? null : (
+          <button
+            className={`icon-btn${bgmOff ? ' is-off' : ''}`}
+            type="button"
+            onClick={toggleBgm}
+            aria-label={bgmOff ? '開啟配樂' : '關閉配樂'}
+            title={bgmOff ? '開啟配樂' : '關閉配樂'}
+          >
+            <SpeakerIcon off={bgmOff} />
+          </button>
+        )}
         <div className="hud-title">
-          <strong>{mode.title}</strong>
+          <strong>{spectate ? '觀戰中' : mode.title}</strong>
           <span>{CHARTS[chartId].name} · {size.label} · {puzzle.name}</span>
         </div>
         <div className="hud-stats">
           <div className="timer" aria-live="off">{formatTime(elapsed)}</div>
           <div className="hud-meter" aria-live="polite">
-            <b>{placed.size}</b>
-            <small>/{cells.length}{mistakes ? ` · 誤 ${mistakes}` : ''}</small>
+            <b>{placedView.size}</b>
+            <small>/{cells.length}{mistakesView ? ` · 誤 ${mistakesView}` : ''}</small>
           </div>
         </div>
       </header>
@@ -401,9 +512,9 @@ export default function PlayBoard({ config, onExit }) {
         >
           {slots.map((slot) => {
             const isFiller = !slot.cell;
-            const isPlaced = isFiller || (slot.cell && placed.has(slot.cell.id));
-            const isFocus = slot.cell && (focusSlot?.id === slot.cell.id || hotSlotId === slot.cell.id);
-            const isWrong = slot.cell && wrongId === slot.cell.id;
+            const isPlaced = isFiller || (slot.cell && placedView.has(slot.cell.id));
+            const isFocus = slot.cell && (focusView?.id === slot.cell.id || (!spectate && hotSlotId === slot.cell.id));
+            const isWrong = slot.cell && wrongView === slot.cell.id;
             return (
               <button
                 key={slot.index}
@@ -419,7 +530,7 @@ export default function PlayBoard({ config, onExit }) {
                   isWrong ? 'is-wrong' : '',
                 ].filter(Boolean).join(' ')}
                 style={{
-                  zIndex: done ? 1 : (isPlaced ? 24 : 2) + slot.row + slot.col,
+                  zIndex: doneView ? 1 : (isPlaced ? 24 : 2) + slot.row + slot.col,
                   fontSize: fontScale,
                 }}
                 onClick={() => onSlotClick(slot)}
@@ -452,45 +563,64 @@ export default function PlayBoard({ config, onExit }) {
 
       <div className="conveyor">
         <button className="conveyor-arrow" type="button" onClick={() => scrollTray(-1)} aria-label="向左看更多碎片">‹</button>
-        <div
-          className="conveyor-track"
-          ref={trackRef}
-          onPointerDown={onTrackPointerDown}
-          onPointerMove={onTrackPointerMove}
-          onPointerUp={onTrackPointerUp}
-          onPointerCancel={onTrackPointerUp}
-          onWheel={onTrackWheel}
-        >
-          {remaining.map((cellData) => {
-            const slot = slots.find((item) => item.cell?.id === cellData.id);
-            const isLifted = dragging?.cell.id === cellData.id;
-            return (
-              <button
-                key={cellData.id}
-                type="button"
-                data-key={cellData.key}
-                className={[
-                  'chip',
-                  selected?.id === cellData.id ? 'is-selected' : '',
-                  wrongPieceId === cellData.id ? 'is-wrong' : '',
-                  mode.answer === 'roma' ? 'is-roma' : '',
-                  isLifted ? 'is-dragging' : '',
-                ].filter(Boolean).join(' ')}
-                onPointerDown={(event) => onPiecePointerDown(event, cellData)}
-                draggable={false}
-                aria-label={`碎片 ${answerOf(cellData, mode)}`}
-              >
-                <span className="chip-hit" aria-hidden="true" />
-                <span
-                  className="chip-face"
-                  style={{ clipPath: slot ? `url(#jig-${slot.index})` : undefined }}
+        <div className="conveyor-main">
+          <div
+            className="conveyor-track"
+            id="conveyor-track"
+            ref={trackRef}
+            onPointerDown={onTrackPointerDown}
+            onPointerMove={onTrackPointerMove}
+            onPointerUp={onTrackPointerUp}
+            onPointerCancel={onTrackPointerUp}
+            onWheel={onTrackWheel}
+          >
+            {remaining.map((cellData) => {
+              const slot = slots.find((item) => item.cell?.id === cellData.id);
+              const isLifted = dragging?.cell.id === cellData.id;
+              return (
+                <button
+                  key={cellData.id}
+                  type="button"
+                  data-key={cellData.key}
+                  className={[
+                    'chip',
+                    selectedView?.id === cellData.id ? 'is-selected' : '',
+                    wrongPieceView === cellData.id ? 'is-wrong' : '',
+                    mode.answer === 'roma' ? 'is-roma' : '',
+                    isLifted ? 'is-dragging' : '',
+                  ].filter(Boolean).join(' ')}
+                  onPointerDown={(event) => onPiecePointerDown(event, cellData)}
+                  draggable={false}
+                  aria-label={`碎片 ${answerOf(cellData, mode)}`}
                 >
-                  <span className="slot-glyph">{answerOf(cellData, mode)}</span>
-                </span>
-                {slot ? <JigStroke d={jigsawPath(slot.edges)} /> : null}
-              </button>
-            );
-          })}
+                  <span className="chip-hit" aria-hidden="true" />
+                  <span
+                    className="chip-face"
+                    style={{ clipPath: slot ? `url(#jig-${slot.index})` : undefined }}
+                  >
+                    <span className="slot-glyph">{answerOf(cellData, mode)}</span>
+                  </span>
+                  {slot ? <JigStroke d={jigsawPath(slot.edges)} /> : null}
+                </button>
+              );
+            })}
+          </div>
+          <div
+            className={`conveyor-bar${trayOverflow ? '' : ' is-full'}`}
+            ref={barRef}
+            role="scrollbar"
+            aria-label="滑動查看更多碎片"
+            aria-orientation="horizontal"
+            aria-controls="conveyor-track"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(trayOverflow ? (trayScroll.left / (trayScroll.span - trayScroll.view)) * 100 : 0)}
+            aria-disabled={!trayOverflow}
+            onPointerDown={trayOverflow ? onBarPointerDown : undefined}
+            onPointerMove={trayOverflow ? onBarPointerMove : undefined}
+          >
+            <i className="conveyor-bar-thumb" style={{ width: `${thumbWidthPct}%`, left: `${thumbLeftPct}%` }} />
+          </div>
         </div>
         <button className="conveyor-arrow" type="button" onClick={() => scrollTray(1)} aria-label="向右看更多碎片">›</button>
       </div>
@@ -514,28 +644,30 @@ export default function PlayBoard({ config, onExit }) {
         </div>
       ) : null}
 
-      {done ? (
-        <div className="gallery" onClick={onGalleryClick} role="presentation">
+      {doneView ? (
+        <div className="gallery" onClick={spectate ? undefined : onGalleryClick} role="presentation">
           <img className="gallery-photo" src={puzzle.url} alt={puzzle.name} />
-          <Fireworks />
-          {showMenu ? (
+          {spectate ? null : <Fireworks />}
+          {showMenu || spectate ? (
             <div className="gallery-card" onClick={(event) => event.stopPropagation()}>
               <p className="stamp">完</p>
               <h2>整張圖揭開了</h2>
-              <p>{formatTime(elapsed)} · {puzzle.name} · {size.label} · 誤放 {mistakes} 次</p>
-              <button className="start-btn" type="button" onClick={onExit}>回主頁</button>
+              <p>{formatTime(elapsed)} · {puzzle.name} · {size.label} · 誤放 {mistakesView} 次</p>
+              <button className="start-btn" type="button" onClick={onExit}>{spectate ? '關閉觀戰' : '回主頁'}</button>
             </div>
           ) : (
             <p className="gallery-hint">點擊畫面繼續</p>
           )}
-          <button
-            className={`icon-btn gallery-bgm${bgmOff ? ' is-off' : ''}`}
-            type="button"
-            onClick={toggleBgm}
-            aria-label={bgmOff ? '開啟配樂' : '關閉配樂'}
-          >
-            <SpeakerIcon off={bgmOff} />
-          </button>
+          {spectate ? null : (
+            <button
+              className={`icon-btn gallery-bgm${bgmOff ? ' is-off' : ''}`}
+              type="button"
+              onClick={toggleBgm}
+              aria-label={bgmOff ? '開啟配樂' : '關閉配樂'}
+            >
+              <SpeakerIcon off={bgmOff} />
+            </button>
+          )}
         </div>
       ) : null}
     </section>

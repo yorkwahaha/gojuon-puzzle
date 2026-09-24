@@ -105,7 +105,7 @@ const ROMAJI = {
   wa: 'wa', wo: 'wo', n: 'n',
   ga: 'ga', gi: 'gi', gu: 'gu', ge: 'ge', go: 'go',
   za: 'za', ji: 'ji', zu: 'zu', ze: 'ze', zo: 'zo',
-  da: 'da', di: 'ji', du: 'zu', de: 'de', do: 'do',
+  da: 'da', di: 'di', du: 'du', de: 'de', do: 'do',
   ba: 'ba', bi: 'bi', bu: 'bu', be: 'be', bo: 'bo',
   pa: 'pa', pi: 'pi', pu: 'pu', pe: 'pe', po: 'po',
   kya: 'kya', kyu: 'kyu', kyo: 'kyo',
@@ -162,6 +162,15 @@ export function glyphFor(key, script) {
   if (script === 'kata') return KATA[key];
   if (script === 'roma') return ROMAJI[key];
   return HIRA[key];
+}
+
+export function promptOf(cell, mode) {
+  if (mode.listen) return '音';
+  return glyphFor(cell.key, mode.prompt);
+}
+
+export function answerOf(cell, mode) {
+  return glyphFor(cell.key, mode.answer);
 }
 
 export function romajiFor(key) {

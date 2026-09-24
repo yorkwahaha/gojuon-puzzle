@@ -3,36 +3,69 @@ const KEY = 'gojuon-puzzle-v1';
 const defaults = {
   muted: false,
   bgmMuted: false,
+  shape: 'jigsaw',
   hints: true,
   best: {},
   levels: {},
   mistakes: {},
 };
 
+let memoryCache = null;
+
+function cloneState(state) {
+  if (!state) return { ...defaults, best: {}, levels: {}, mistakes: {} };
+  return {
+    ...state,
+    best: { ...state.best },
+    levels: Object.fromEntries(
+      Object.entries(state.levels || {}).map(([k, v]) => [k, { ...v }])
+    ),
+    mistakes: Object.fromEntries(
+      Object.entries(state.mistakes || {}).map(([k, v]) => [k, { ...v }])
+    ),
+  };
+}
+
 function read() {
+  if (memoryCache) return memoryCache;
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return { ...defaults, best: {}, levels: {}, mistakes: {} };
+    if (!raw) {
+      memoryCache = cloneState(defaults);
+      return memoryCache;
+    }
     const parsed = JSON.parse(raw);
-    return {
+    memoryCache = {
       muted: Boolean(parsed.muted),
       bgmMuted: Boolean(parsed.bgmMuted),
+      shape: parsed.shape === 'rect' ? 'rect' : 'jigsaw',
       hints: parsed.hints !== false,
-      best: parsed.best && typeof parsed.best === 'object' ? parsed.best : {},
-      levels: parsed.levels && typeof parsed.levels === 'object' ? parsed.levels : {},
-      mistakes: parsed.mistakes && typeof parsed.mistakes === 'object' ? parsed.mistakes : {},
+      best: parsed.best && typeof parsed.best === 'object' ? { ...parsed.best } : {},
+      levels: parsed.levels && typeof parsed.levels === 'object'
+        ? Object.fromEntries(Object.entries(parsed.levels).map(([k, v]) => [k, { ...v }]))
+        : {},
+      mistakes: parsed.mistakes && typeof parsed.mistakes === 'object'
+        ? Object.fromEntries(Object.entries(parsed.mistakes).map(([k, v]) => [k, { ...v }]))
+        : {},
     };
+    return memoryCache;
   } catch {
-    return { ...defaults, best: {}, levels: {}, mistakes: {} };
+    memoryCache = cloneState(defaults);
+    return memoryCache;
   }
 }
 
 function write(state) {
-  localStorage.setItem(KEY, JSON.stringify(state));
+  memoryCache = cloneState(state);
+  try {
+    localStorage.setItem(KEY, JSON.stringify(memoryCache));
+  } catch {
+    // ignore quota or storage exceptions
+  }
 }
 
 export function loadPrefs() {
-  return read();
+  return cloneState(read());
 }
 
 export function savePrefs(patch) {
@@ -77,11 +110,12 @@ export function getLevelRecords(puzzleId) {
 
 export function recordMistakes(mistakes) {
   const state = read();
+  const nextMistakes = { ...state.mistakes };
   mistakes.forEach(({ id, kana, romaji }) => {
-    const previous = state.mistakes[id] || { id, kana, romaji, count: 0 };
-    state.mistakes[id] = { ...previous, count: previous.count + 1 };
+    const previous = nextMistakes[id] || { id, kana, romaji, count: 0 };
+    nextMistakes[id] = { ...previous, count: previous.count + 1 };
   });
-  write(state);
+  write({ ...state, mistakes: nextMistakes });
 }
 
 export function getWeakest(limit = 3) {

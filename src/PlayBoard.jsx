@@ -1,21 +1,23 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CHARTS, chartCells, glyphFor } from './kana.js';
+import { CHARTS, answerOf, chartCells, glyphFor, promptOf } from './kana.js';
 import { MODE_BY_ID } from './modes.js';
 import { BOARD_SIZES, sizeCount } from './grid.js';
 import {
   TAB_FRAC,
   faceBackground,
   fittedImage,
-  jigsawPath,
   makeJigsaw,
   pieceEdges,
+  piecePath,
   seeded,
   shuffle,
 } from './jigsaw.js';
 import { playComplete, playPickup, playSnap, primeKana, resumeBgm, setBgmMuted, speakKana } from './audio.js';
 import { formatTime, loadPrefs, recordLevelBest, savePrefs } from './storage.js';
 import { playSnapshot } from './room.js';
+import { choiceOptions, topMissed } from './review.js';
 import Fireworks from './Fireworks.jsx';
+import ReviewDrill from './ReviewDrill.jsx';
 
 function JigStroke({ d }) {
   return (
@@ -38,15 +40,6 @@ function SpeakerIcon({ off }) {
   );
 }
 
-function promptOf(cell, mode) {
-  if (mode.listen) return '音';
-  return glyphFor(cell.key, mode.prompt);
-}
-
-function answerOf(cell, mode) {
-  return glyphFor(cell.key, mode.answer);
-}
-
 export default function PlayBoard({
   config,
   onExit,
@@ -56,7 +49,7 @@ export default function PlayBoard({
   watching = false,
   onCopyLink,
 }) {
-  const { modeId, chartId, puzzle, sizeId, seed } = config;
+  const { modeId, chartId, puzzle, sizeId, seed, shape = 'jigsaw' } = config;
   const mode = MODE_BY_ID[modeId];
   const size = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
   const { cols, rows } = size;
@@ -73,6 +66,7 @@ export default function PlayBoard({
   );
 
   const jig = useMemo(() => makeJigsaw(cols, rows, seed), [cols, rows, seed]);
+  const tabs = shape !== 'rect';
 
   const stageRef = useRef(null);
   const trackRef = useRef(null);
@@ -87,9 +81,18 @@ export default function PlayBoard({
   const [selected, setSelected] = useState(null);
   const [focusSlot, setFocusSlot] = useState(null);
   const [mistakes, setMistakes] = useState(0);
+  const [missCounts, setMissCounts] = useState({});
   const [wrongId, setWrongId] = useState(null);
   const [wrongPieceId, setWrongPieceId] = useState(null);
   const wrongTimer = useRef(null);
+  const reviewTimer = useRef(null);
+  const settled = useRef(false);
+  const [reviewItems, setReviewItems] = useState(null);
+  const [matched, setMatched] = useState([]);
+  const [reviewLeft, setReviewLeft] = useState(null);
+  const [reviewRight, setReviewRight] = useState(null);
+  const [choicePick, setChoicePick] = useState(null);
+  const [reviewWrong, setReviewWrong] = useState(false);
   const [done, setDone] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [imgSize, setImgSize] = useState(null);
@@ -112,6 +115,17 @@ export default function PlayBoard({
   const wrongView = spectate ? liveState?.wrongId ?? null : wrongId;
   const wrongPieceView = spectate ? liveState?.wrongPieceId ?? null : wrongPieceId;
   const doneView = spectate ? liveState?.phase === 'done' : done;
+  const reviewLive = spectate ? liveState?.review : null;
+  const reviewItemsView = spectate
+    ? (reviewLive?.keys || []).map((id) => cells.find((item) => item.id === id)).filter(Boolean)
+    : reviewItems;
+  const missCountsView = spectate ? reviewLive?.counts || {} : missCounts;
+  const matchedView = spectate ? reviewLive?.matched || [] : matched;
+  const reviewLeftView = spectate ? reviewLive?.leftId ?? null : reviewLeft;
+  const reviewRightView = spectate ? reviewLive?.rightId ?? null : reviewRight;
+  const choicePickView = spectate ? reviewLive?.choicePick ?? null : choicePick;
+  const reviewWrongView = spectate ? Boolean(reviewLive?.wrong) : reviewWrong;
+  const reviewing = Boolean(reviewItemsView?.length) && !doneView;
 
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -133,7 +147,7 @@ export default function PlayBoard({
   }, []);
 
   useEffect(() => {
-    if (doneView) return undefined;
+    if (doneView || reviewing) return undefined;
     const tick = () => {
       if (spectate) {
         const start = liveState?.startedAt;
@@ -145,11 +159,12 @@ export default function PlayBoard({
     tick();
     const id = window.setInterval(tick, 80);
     return () => window.clearInterval(id);
-  }, [doneView, liveState?.startedAt, spectate]);
+  }, [doneView, liveState?.startedAt, reviewing, spectate]);
 
   const cell = Math.min(stage.w / cols, stage.h / rows);
   const frame = { w: cell * cols, h: cell * rows };
-  const tab = cell * TAB_FRAC;
+  const tabFrac = tabs ? TAB_FRAC : 0;
+  const tab = cell * tabFrac;
   const fit = fittedImage(cols, rows, imgSize?.w, imgSize?.h);
 
   const slots = useMemo(() => {
@@ -162,10 +177,27 @@ export default function PlayBoard({
         col,
         row,
         cell: cells[index] || null,
-        edges: pieceEdges(col, row, cols, rows, jig),
+        edges: tabs
+          ? pieceEdges(col, row, cols, rows, jig)
+          : { top: 0, right: 0, bottom: 0, left: 0 },
       };
     });
-  }, [cells, cols, jig, rows]);
+  }, [cells, cols, jig, rows, tabs]);
+
+  const reviewKind = reviewItemsView?.length === 1 ? 'choice' : 'match';
+  const reviewIds = (reviewItemsView || []).map((item) => item.id).join('|');
+  const leftOrder = useMemo(
+    () => reviewIds.split('|').filter(Boolean).map((id) => cells.find((item) => item.id === id)).filter(Boolean),
+    [cells, reviewIds]
+  );
+  const rightOrder = useMemo(
+    () => shuffle([...leftOrder], seeded(seed + 404)),
+    [leftOrder, seed]
+  );
+  const options = useMemo(
+    () => (leftOrder.length === 1 ? choiceOptions(leftOrder[0], cells, seeded(seed + 505)) : []),
+    [cells, leftOrder, seed]
+  );
 
   function toggleBgm(event) {
     event?.stopPropagation();
@@ -194,6 +226,7 @@ export default function PlayBoard({
 
   useEffect(() => () => {
     if (wrongTimer.current) window.clearTimeout(wrongTimer.current);
+    if (reviewTimer.current) window.clearTimeout(reviewTimer.current);
   }, []);
 
   useLayoutEffect(() => {
@@ -217,14 +250,21 @@ export default function PlayBoard({
   }, [remaining.length]);
 
   useEffect(() => {
-    if (spectate || !complete || done) return undefined;
+    if (spectate || !complete || settled.current) return undefined;
+    settled.current = true;
     const ms = performance.now() - startedAt.current;
     setElapsed(ms);
     recordLevelBest(puzzle.id, sizeId, ms);
     playComplete();
+    const weak = topMissed(cells, missCounts);
+    if (weak.length) {
+      setReviewItems(weak);
+      return undefined;
+    }
     setDone(true);
     galleryAt.current = performance.now();
-  }, [complete, done, puzzle.id, sizeId, spectate]);
+    return undefined;
+  }, [cells, complete, missCounts, puzzle.id, sizeId, spectate]);
 
   useEffect(() => {
     if (!onLiveState || spectate) return undefined;
@@ -237,14 +277,96 @@ export default function PlayBoard({
       wrongId,
       wrongPieceId,
       startedAt: wallStartedAt.current,
-      done: done || complete,
+      done: done || (complete && !reviewItems),
+      review: reviewItems
+        ? {
+          keys: reviewItems.map((item) => item.id),
+          counts: missCounts,
+          matched,
+          leftId: reviewLeft,
+          rightId: reviewRight,
+          choicePick,
+          wrong: reviewWrong,
+        }
+        : null,
     }));
     return undefined;
-  }, [complete, config, done, focusSlot, mistakes, onLiveState, placed, selected, spectate, wrongId, wrongPieceId]);
+  }, [choicePick, complete, config, done, focusSlot, matched, missCounts, mistakes, onLiveState, placed, reviewItems, reviewLeft, reviewRight, reviewWrong, selected, spectate, wrongId, wrongPieceId]);
 
   function speak(cellData) {
     speakKana(cellData.key);
   }
+
+  function finishReview() {
+    setDone(true);
+    galleryAt.current = performance.now();
+  }
+
+  function flashReviewWrong() {
+    setReviewWrong(true);
+    if (reviewTimer.current) window.clearTimeout(reviewTimer.current);
+    reviewTimer.current = window.setTimeout(() => {
+      setReviewLeft(null);
+      setReviewRight(null);
+      setChoicePick(null);
+      setReviewWrong(false);
+      reviewTimer.current = null;
+    }, 520);
+  }
+
+  function pickReviewLeft(id) {
+    if (spectate) return;
+    const item = cells.find((cellData) => cellData.id === id);
+    if (item) speak(item);
+    if (reviewRight) {
+      if (id === reviewRight) {
+        setMatched((prev) => (prev.includes(id) ? prev : [...prev, id]));
+        setReviewLeft(null);
+        setReviewRight(null);
+        setReviewWrong(false);
+        return;
+      }
+      setReviewLeft(id);
+      flashReviewWrong();
+      return;
+    }
+    setReviewLeft(id);
+  }
+
+  function pickReviewRight(id) {
+    if (spectate) return;
+    if (reviewLeft) {
+      if (id === reviewLeft) {
+        setMatched((prev) => (prev.includes(id) ? prev : [...prev, id]));
+        setReviewLeft(null);
+        setReviewRight(null);
+        setReviewWrong(false);
+        return;
+      }
+      setReviewRight(id);
+      flashReviewWrong();
+      return;
+    }
+    setReviewRight(id);
+  }
+
+  function pickReviewChoice(id) {
+    if (spectate || !reviewItems?.[0]) return;
+    setChoicePick(id);
+    if (id === reviewItems[0].id) {
+      setMatched([id]);
+      setReviewWrong(false);
+      return;
+    }
+    flashReviewWrong();
+  }
+
+  useEffect(() => {
+    if (spectate || !reviewItems || done) return undefined;
+    if (matched.length < reviewItems.length) return undefined;
+    const id = window.setTimeout(finishReview, 560);
+    return () => window.clearTimeout(id);
+  }, [done, matched.length, reviewItems, spectate]);
 
   function place(piece, slotCell) {
     if (!piece || !slotCell || placed.has(slotCell.id)) return;
@@ -261,6 +383,7 @@ export default function PlayBoard({
       return;
     }
     setMistakes((value) => value + 1);
+    setMissCounts((prev) => ({ ...prev, [slotCell.id]: (prev[slotCell.id] || 0) + 1 }));
     setSelected(null);
     setFocusSlot(null);
     setWrongId(slotCell.id);
@@ -456,12 +579,12 @@ export default function PlayBoard({
     : 0;
 
   return (
-    <section className={`play${spectate ? ' is-spectate' : ''}`}>
+    <section className={`play${spectate ? ' is-spectate' : ''}${tabs ? '' : ' is-rect'}`}>
       <svg className="clip-defs" aria-hidden="true">
         <defs>
           {slots.map((slot) => (
             <clipPath key={slot.index} id={`jig-${slot.index}`} clipPathUnits="objectBoundingBox">
-              <path d={jigsawPath(slot.edges)} />
+              <path d={piecePath(slot.edges, tabs)} />
             </clipPath>
           ))}
         </defs>
@@ -489,7 +612,7 @@ export default function PlayBoard({
           </button>
         )}
         <div className="hud-title">
-          <strong>{spectate ? '觀戰中' : mode.title}</strong>
+          <strong>{spectate ? '觀戰中' : `${mode.title}${tabs ? '' : ' · 進階'}`}</strong>
           <span>{CHARTS[chartId].name} · {size.label} · {puzzle.name}</span>
         </div>
         <div className="hud-stats">
@@ -551,12 +674,12 @@ export default function PlayBoard({
                   style={{
                     clipPath: `url(#jig-${slot.index})`,
                     backgroundImage: isPlaced ? `url(${puzzle.url})` : undefined,
-                    ...faceBackground(slot.col, slot.row, cell, fit),
+                    ...faceBackground(slot.col, slot.row, cell, fit, tabFrac),
                   }}
                 >
                   {isPlaced ? null : <span className="slot-glyph">{promptOf(slot.cell, mode)}</span>}
                 </span>
-                {isPlaced ? null : <JigStroke d={jigsawPath(slot.edges)} />}
+                {isPlaced ? null : <JigStroke d={piecePath(slot.edges, tabs)} />}
               </button>
             );
           })}
@@ -602,7 +725,7 @@ export default function PlayBoard({
                   >
                     <span className="slot-glyph">{answerOf(cellData, mode)}</span>
                   </span>
-                  {slot ? <JigStroke d={jigsawPath(slot.edges)} /> : null}
+                  {slot ? <JigStroke d={piecePath(slot.edges, tabs)} /> : null}
                 </button>
               );
             })}
@@ -644,6 +767,28 @@ export default function PlayBoard({
             <span className="slot-glyph">{answerOf(dragging.cell, mode)}</span>
           </span>
         </div>
+      ) : null}
+
+      {reviewing ? (
+        <ReviewDrill
+          items={reviewItemsView}
+          counts={missCountsView}
+          mode={mode}
+          kind={reviewKind}
+          leftOrder={leftOrder}
+          rightOrder={rightOrder}
+          options={options}
+          matched={matchedView}
+          leftId={reviewLeftView}
+          rightId={reviewRightView}
+          choicePick={choicePickView}
+          wrong={reviewWrongView}
+          spectate={spectate}
+          onSpeak={spectate ? undefined : speak}
+          onPickLeft={pickReviewLeft}
+          onPickRight={pickReviewRight}
+          onPickChoice={pickReviewChoice}
+        />
       ) : null}
 
       {doneView ? (

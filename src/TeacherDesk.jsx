@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import PlayBoard from './PlayBoard.jsx';
 import { CHARTS } from './kana.js';
 import { BOARD_SIZES } from './grid.js';
-import { MODE_BY_ID } from './modes.js';
-import { PUZZLES } from './puzzleImages.js';
+import { MODE_BY_ID, SHAPE_CHOICES } from './modes.js';
+import { PUZZLES, puzzleById } from './puzzleImages.js';
 import {
-  OFFLINE_MS,
   clearTeacherSession,
   createRoom,
   endRoom,
@@ -15,10 +14,6 @@ import {
   readTeacherSession,
   subscribeRoom,
 } from './room.js';
-
-function puzzleById(id) {
-  return PUZZLES.find((item) => item.id === id) || PUZZLES[0];
-}
 
 function setTeacherUrl(room) {
   const url = new URL(window.location.href);
@@ -62,7 +57,8 @@ export default function TeacherDesk() {
   const livePuzzle = puzzleById(live?.config?.puzzleId);
   const liveMode = MODE_BY_ID[live?.config?.modeId];
   const liveSize = BOARD_SIZES.find((item) => item.id === live?.config?.sizeId);
-  const studentOnline = isStudentOnline(live) || (Boolean(live?.heartbeat) && now - live.heartbeat < OFFLINE_MS);
+  const liveShape = SHAPE_CHOICES.find((item) => item.id === (live?.config?.shape || 'jigsaw'));
+  const studentOnline = isStudentOnline(live);
   const sessionOk = Boolean(room && readTeacherSession()?.code === room);
 
   useEffect(() => {
@@ -131,7 +127,7 @@ export default function TeacherDesk() {
     await openRoom(true);
   }
 
-  if (room && sessionOk && (live?.phase === 'play' || live?.phase === 'done') && live?.config?.seed != null && liveMode && !live?.ended) {
+  if (room && sessionOk && (live?.phase === 'play' || live?.phase === 'review' || live?.phase === 'done') && live?.config?.seed != null && liveMode && !live?.ended) {
     return (
       <div className="app is-play">
         <div className="grain" />
@@ -142,6 +138,7 @@ export default function TeacherDesk() {
             chartId: live.config.chartId,
             puzzle: livePuzzle,
             sizeId: live.config.sizeId,
+            shape: live.config.shape || 'jigsaw',
             seed: live.config.seed,
           }}
           spectate
@@ -188,6 +185,7 @@ export default function TeacherDesk() {
             {inLobby ? (
               <p className="watch-lobby">
                 {liveMode?.title || '選關中'}
+                {liveShape ? ` · ${liveShape.label}` : ''}
                 {' · '}
                 {CHARTS[live?.config?.chartId]?.name || ''}
                 {liveSize ? ` · ${liveSize.label}` : ''}

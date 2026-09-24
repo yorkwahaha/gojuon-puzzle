@@ -289,11 +289,11 @@ export function isStudentOnline(state) {
   return Date.now() - state.heartbeat < OFFLINE_MS;
 }
 
-export function lobbySnapshot({ modeId, chartId, puzzleId, sizeId }) {
+export function lobbySnapshot({ modeId, chartId, puzzleId, sizeId, shape = 'jigsaw' }) {
   return {
     phase: 'lobby',
     heartbeat: Date.now(),
-    config: { modeId, chartId, puzzleId, sizeId, seed: null },
+    config: { modeId, chartId, puzzleId, sizeId, shape, seed: null },
     placed: [],
     mistakes: 0,
     selected: null,
@@ -301,18 +301,20 @@ export function lobbySnapshot({ modeId, chartId, puzzleId, sizeId }) {
     wrongId: null,
     wrongPieceId: null,
     startedAt: null,
+    review: null,
   };
 }
 
-export function playSnapshot({ config, placed, mistakes, selected, focusSlot, wrongId, wrongPieceId, startedAt, done }) {
+export function playSnapshot({ config, placed, mistakes, selected, focusSlot, wrongId, wrongPieceId, startedAt, done, review }) {
   return {
-    phase: done ? 'done' : 'play',
+    phase: done ? 'done' : review ? 'review' : 'play',
     heartbeat: Date.now(),
     config: {
       modeId: config.modeId,
       chartId: config.chartId,
       puzzleId: config.puzzle.id,
       sizeId: config.sizeId,
+      shape: config.shape || 'jigsaw',
       seed: config.seed,
     },
     placed: [...placed],
@@ -322,5 +324,6 @@ export function playSnapshot({ config, placed, mistakes, selected, focusSlot, wr
     wrongId,
     wrongPieceId,
     startedAt,
+    review: review || null,
   };
 }

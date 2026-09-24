@@ -11,6 +11,11 @@ export const PIECE_CHOICES = [
   { id: 'roma', label: '羅馬拼音' },
 ];
 
+export const SHAPE_CHOICES = [
+  { id: 'jigsaw', label: '入門', hint: '凹凸邊' },
+  { id: 'rect', label: '進階', hint: '純四角' },
+];
+
 const LABELS = {
   hira: '平假名',
   kata: '片假名',

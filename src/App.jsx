@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PlayBoard from './PlayBoard.jsx';
 import { CHARTS, RANGE_ORDER, chartCells } from './kana.js';
 import { BOARD_SIZES, sizeCount } from './grid.js';
-import { BOARD_CHOICES, PIECE_CHOICES, modeIdOf, MODE_BY_ID } from './modes.js';
-import { PUZZLES } from './puzzleImages.js';
+import { BOARD_CHOICES, PIECE_CHOICES, SHAPE_CHOICES, modeIdOf, MODE_BY_ID } from './modes.js';
+import { PUZZLES, puzzleById } from './puzzleImages.js';
 import { playBgm, setMuted, setBgmMuted, stopBgm, unlockAudio } from './audio.js';
-import { formatTime, loadPrefs } from './storage.js';
+import { formatTime, loadPrefs, savePrefs } from './storage.js';
 import {
   HEARTBEAT_MS,
   isRoomEnded,
@@ -21,10 +21,6 @@ function largestFit(chartId) {
 
 function isPuzzleClear(levelTimes, puzzleId) {
   return Object.keys(levelTimes[puzzleId] || {}).length > 0;
-}
-
-function puzzleById(id) {
-  return PUZZLES.find((item) => item.id === id) || PUZZLES[0];
 }
 
 function ClassroomLock({ title, message }) {
@@ -44,6 +40,7 @@ export default function App() {
   const [pieceId, setPieceId] = useState('hira');
   const [chartId, setChartId] = useState('seion');
   const [sizeId, setSizeId] = useState('8x4');
+  const [shape, setShape] = useState(() => loadPrefs().shape === 'rect' ? 'rect' : 'jigsaw');
   const [puzzleId, setPuzzleId] = useState(PUZZLES[0].id);
   const [muted, setMutedState] = useState(false);
   const [seed, setSeed] = useState(1);
@@ -60,14 +57,17 @@ export default function App() {
   const mode = MODE_BY_ID[modeId];
   const pool = useMemo(() => chartCells(chartId).length, [chartId]);
   const size = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
-  const levelTimes = loadPrefs().levels;
+  const [levelTimes, setLevelTimes] = useState(() => loadPrefs().levels);
   const levelRecords = Object.entries(levelTimes[puzzle.id] || {})
     .map(([id, ms]) => ({ sizeId: id, ms }))
     .sort((a, b) => a.ms - b.ms);
   const puzzleClear = isPuzzleClear(levelTimes, puzzle.id);
   const watching = Boolean(room) && !classLock;
 
-  function lockClass(kind) {
+  const classLockRef = useRef(classLock);
+  classLockRef.current = classLock;
+
+  const lockClass = useCallback((kind) => {
     stopBgm();
     if (kind === 'ended') {
       setClassLock({ title: '老師已結束本次課程', message: '這次遊玩已經鎖定。重新整理也無法繼續。' });
@@ -82,10 +82,10 @@ export default function App() {
       return;
     }
     setClassLock({ title: '老師已結束本次課程', message: '這次遊玩已經鎖定。重新整理也無法繼續。' });
-  }
+  }, []);
 
-  async function pushLive(payload) {
-    if (!room || classLock) return;
+  const pushLive = useCallback(async (payload) => {
+    if (!room || classLockRef.current) return;
     try {
       const result = await patchRoom(room, payload);
       if (result?.ended) lockClass('ended');
@@ -96,7 +96,7 @@ export default function App() {
       else if (code === 'not_found') lockClass('missing');
       else if (payload?.phase === 'lobby') setRoomError('教室連不上，請再試一次。');
     }
-  }
+  }, [lockClass, room]);
 
   function pickChart(id) {
     setChartId(id);
@@ -128,17 +128,18 @@ export default function App() {
 
   function leavePlay() {
     stopBgm();
+    setLevelTimes(loadPrefs().levels);
     setScreen('home');
   }
 
   useEffect(() => {
     if (!watching || screen !== 'home') return undefined;
-    void pushLive(lobbySnapshot({ modeId, chartId, puzzleId, sizeId }));
+    void pushLive(lobbySnapshot({ modeId, chartId, puzzleId, sizeId, shape }));
     const id = window.setInterval(() => {
       void pushLive({ heartbeat: Date.now() });
     }, HEARTBEAT_MS);
     return () => window.clearInterval(id);
-  }, [watching, screen, modeId, chartId, puzzleId, sizeId, room]);
+  }, [watching, screen, modeId, chartId, puzzleId, sizeId, shape, pushLive]);
 
   useEffect(() => {
     if (!watching || screen !== 'play') return undefined;
@@ -146,7 +147,7 @@ export default function App() {
       void pushLive({ heartbeat: Date.now() });
     }, HEARTBEAT_MS);
     return () => window.clearInterval(id);
-  }, [watching, screen, room]);
+  }, [watching, screen, pushLive]);
 
   if (classLock) {
     return (
@@ -162,9 +163,9 @@ export default function App() {
       <div className="app is-play">
         <div className="grain" />
         <PlayBoard
-          config={{ modeId, chartId, puzzle, sizeId, seed }}
+          config={{ modeId, chartId, puzzle, sizeId, seed, shape }}
           watching={watching}
-          onLiveState={watching ? (payload) => void pushLive(payload) : undefined}
+          onLiveState={watching ? pushLive : undefined}
           onExit={leavePlay}
         />
       </div>
@@ -201,7 +202,7 @@ export default function App() {
           <header className="home-panel-top">
             <div>
               <h1>霧繪五十音</h1>
-              <p className="home-mode">{mode?.title}</p>
+              <p className="home-mode">{mode?.title} · {shape === 'rect' ? '進階（純四角）' : '入門（凹凸邊）'}</p>
             </div>
             <div className="home-tools">
               <button
@@ -273,6 +274,26 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div className="setup-block">
+              <h2>難度</h2>
+              <div className="seg" role="tablist" aria-label="拼圖難度">
+                {SHAPE_CHOICES.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={shape === item.id ? 'is-on' : ''}
+                    onClick={() => {
+                      setShape(item.id);
+                      savePrefs({ shape: item.id });
+                    }}
+                  >
+                    {item.label}
+                    <small>{item.hint}</small>
+                  </button>
+                ))}
               </div>
             </div>
 

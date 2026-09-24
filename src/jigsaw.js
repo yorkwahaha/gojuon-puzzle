@@ -75,6 +75,11 @@ export function jigsawPath(edges) {
   ].join('');
 }
 
+export function piecePath(edges, tabs) {
+  if (!tabs) return 'M0 0H1V1H0Z';
+  return jigsawPath(edges);
+}
+
 export function fittedImage(cols, rows, imgW, imgH) {
   if (!imgW || !imgH) {
     return { drawW: cols, drawH: rows, offsetX: 0, offsetY: 0 };
@@ -91,8 +96,8 @@ export function fittedImage(cols, rows, imgW, imgH) {
   return { drawW, drawH, offsetX: (cols - drawW) / 2, offsetY: 0 };
 }
 
-export function faceBackground(col, row, cell, fit) {
-  const t = TAB_FRAC;
+export function faceBackground(col, row, cell, fit, tabFrac = TAB_FRAC) {
+  const t = tabFrac;
   return {
     backgroundSize: `${fit.drawW * cell}px ${fit.drawH * cell}px`,
     backgroundPosition: `${(fit.offsetX - (col - t)) * cell}px ${(fit.offsetY - (row - t)) * cell}px`,

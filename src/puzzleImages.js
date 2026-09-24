@@ -18,3 +18,8 @@ export const PUZZLES = [
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant')),
   ...(Object.keys(files).length ? [] : [{ id: 'demo', name: '示範・あ', url: demo }]),
 ];
+
+export function puzzleById(id) {
+  return PUZZLES.find((item) => item.id === id) || PUZZLES[0];
+}
+

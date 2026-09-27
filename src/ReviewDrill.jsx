@@ -81,7 +81,6 @@ export default function ReviewDrill({
                     className={`review-tile${isOk ? ' is-ok' : ''}${isOn ? ' is-on' : ''}${isBad ? ' is-wrong' : ''}`}
                     disabled={spectate || isOk}
                     onClick={() => {
-                      onSpeak?.(item);
                       onPickLeft(item.id);
                     }}
                     aria-label={`${promptOf(item, mode)}，錯 ${counts[item.id] || 0} 次`}

@@ -73,6 +73,7 @@ export default function PlayBoard({
   const barRef = useRef(null);
   const panRef = useRef(null);
   const ignoreSlotClick = useRef(false);
+  const ignoreSlotTimer = useRef(null);
   const [dragging, setDragging] = useState(null);
   const [hotSlotId, setHotSlotId] = useState(null);
   const startedAt = useRef(performance.now());
@@ -87,6 +88,7 @@ export default function PlayBoard({
   const wrongTimer = useRef(null);
   const reviewTimer = useRef(null);
   const settled = useRef(false);
+  const completionMs = useRef(null);
   const [reviewItems, setReviewItems] = useState(null);
   const [matched, setMatched] = useState([]);
   const [reviewLeft, setReviewLeft] = useState(null);
@@ -96,11 +98,7 @@ export default function PlayBoard({
   const [done, setDone] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [imgSize, setImgSize] = useState(null);
-  const [bgmOff, setBgmOff] = useState(() => {
-    const off = loadPrefs().bgmMuted;
-    setBgmMuted(off);
-    return off;
-  });
+  const [bgmOff, setBgmOff] = useState(() => loadPrefs().bgmMuted);
   const [showMenu, setShowMenu] = useState(false);
   const [trayScroll, setTrayScroll] = useState({ left: 0, span: 1, view: 1 });
   const galleryAt = useRef(0);
@@ -147,6 +145,15 @@ export default function PlayBoard({
   }, []);
 
   useEffect(() => {
+    if (spectate && (doneView || reviewing)) {
+      if (liveState?.elapsedMs != null) {
+        setElapsed(liveState.elapsedMs);
+      } else {
+        const start = liveState?.startedAt;
+        setElapsed(start ? Math.max(0, Date.now() - start) : 0);
+      }
+      return undefined;
+    }
     if (doneView || reviewing) return undefined;
     const tick = () => {
       if (spectate) {
@@ -159,7 +166,7 @@ export default function PlayBoard({
     tick();
     const id = window.setInterval(tick, 80);
     return () => window.clearInterval(id);
-  }, [doneView, liveState?.startedAt, reviewing, spectate]);
+  }, [doneView, liveState?.elapsedMs, liveState?.startedAt, reviewing, spectate]);
 
   const cell = Math.min(stage.w / cols, stage.h / rows);
   const frame = { w: cell * cols, h: cell * rows };
@@ -220,13 +227,17 @@ export default function PlayBoard({
 
   useEffect(() => {
     if (spectate) return undefined;
+    setBgmMuted(bgmOff);
     resumeBgm();
     return undefined;
-  }, [spectate]);
+  }, [bgmOff, spectate]);
 
   useEffect(() => () => {
     if (wrongTimer.current) window.clearTimeout(wrongTimer.current);
     if (reviewTimer.current) window.clearTimeout(reviewTimer.current);
+    if (ignoreSlotTimer.current) window.clearTimeout(ignoreSlotTimer.current);
+    unbindPiecePointer(panRef.current);
+    panRef.current = null;
   }, []);
 
   useLayoutEffect(() => {
@@ -253,14 +264,15 @@ export default function PlayBoard({
     if (spectate || !complete || settled.current) return undefined;
     settled.current = true;
     const ms = performance.now() - startedAt.current;
+    completionMs.current = ms;
     setElapsed(ms);
-    recordLevelBest(puzzle.id, sizeId, ms);
     playComplete();
     const weak = topMissed(cells, missCounts);
     if (weak.length) {
       setReviewItems(weak);
       return undefined;
     }
+    recordLevelBest(puzzle.id, sizeId, ms);
     setDone(true);
     galleryAt.current = performance.now();
     return undefined;
@@ -277,7 +289,8 @@ export default function PlayBoard({
       wrongId,
       wrongPieceId,
       startedAt: wallStartedAt.current,
-      done: done || (complete && !reviewItems),
+      elapsedMs: complete ? completionMs.current : null,
+      done,
       review: reviewItems
         ? {
           keys: reviewItems.map((item) => item.id),
@@ -298,6 +311,9 @@ export default function PlayBoard({
   }
 
   function finishReview() {
+    if (completionMs.current != null) {
+      recordLevelBest(puzzle.id, sizeId, completionMs.current);
+    }
     setDone(true);
     galleryAt.current = performance.now();
   }
@@ -461,6 +477,14 @@ export default function PlayBoard({
     setDragging({ cell: cellData, x: event.clientX, y: event.clientY });
   }
 
+  function onPieceKeyDown(event, cellData) {
+    if (spectate || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    playPickup();
+    primeKana(cellData.key);
+    setSelected((current) => current?.id === cellData.id ? null : cellData);
+  }
+
   function onPiecePointerMove(event) {
     const pan = panRef.current;
     if (!pan || pan.pointerId !== event.pointerId || pan.type !== 'piece') return;
@@ -476,8 +500,10 @@ export default function PlayBoard({
     unbindPiecePointer(pan);
     panRef.current = null;
     ignoreSlotClick.current = true;
-    window.setTimeout(() => {
+    if (ignoreSlotTimer.current) window.clearTimeout(ignoreSlotTimer.current);
+    ignoreSlotTimer.current = window.setTimeout(() => {
       ignoreSlotClick.current = false;
+      ignoreSlotTimer.current = null;
     }, 0);
     setDragging(null);
     setHotSlotId(null);
@@ -715,6 +741,7 @@ export default function PlayBoard({
                     isLifted ? 'is-dragging' : '',
                   ].filter(Boolean).join(' ')}
                   onPointerDown={(event) => onPiecePointerDown(event, cellData)}
+                  onKeyDown={(event) => onPieceKeyDown(event, cellData)}
                   draggable={false}
                   aria-label={`碎片 ${answerOf(cellData, mode)}`}
                 >
@@ -741,6 +768,18 @@ export default function PlayBoard({
             aria-valuemax={100}
             aria-valuenow={Math.round(trayOverflow ? (trayScroll.left / (trayScroll.span - trayScroll.view)) * 100 : 0)}
             aria-disabled={!trayOverflow}
+            tabIndex={trayOverflow ? 0 : -1}
+            onKeyDown={trayOverflow ? (event) => {
+              const track = trackRef.current;
+              if (!track) return;
+              const step = Math.max(48, track.clientWidth * 0.2);
+              if (event.key === 'ArrowLeft') track.scrollLeft -= step;
+              else if (event.key === 'ArrowRight') track.scrollLeft += step;
+              else if (event.key === 'Home') track.scrollLeft = 0;
+              else if (event.key === 'End') track.scrollLeft = track.scrollWidth;
+              else return;
+              event.preventDefault();
+            } : undefined}
             onPointerDown={trayOverflow ? onBarPointerDown : undefined}
             onPointerMove={trayOverflow ? onBarPointerMove : undefined}
           >
@@ -805,7 +844,22 @@ export default function PlayBoard({
               )}
             </div>
           ) : (
-            <p className="gallery-hint">點擊畫面繼續</p>
+            <p
+              className="gallery-hint"
+              role="button"
+              tabIndex={0}
+              onClick={(event) => {
+                event.stopPropagation();
+                onGalleryClick();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                onGalleryClick();
+              }}
+            >
+              點擊畫面繼續
+            </p>
           )}
           {spectate ? null : (
             <button

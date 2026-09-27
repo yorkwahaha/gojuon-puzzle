@@ -1,10 +1,11 @@
-import {generateCode, handleClassroomRequest} from './classroom-core.mjs';
+import {ROOM_TTL_MS, generateCode, handleClassroomRequest, sessionExpired} from './classroom-core.mjs';
 
 function durableStore(room) {
   return {
     async create(session) {
       room.session = session;
       await room.ctx.storage.put('session', session);
+      await room.ctx.storage.setAlarm?.(session.createdAt + ROOM_TTL_MS);
       return session;
     },
     async get(code) {
@@ -15,6 +16,11 @@ function durableStore(room) {
       room.session = session;
       await room.ctx.storage.put('session', session);
       return session;
+    },
+    async purge(now) {
+      if (!room.session || !sessionExpired(room.session, now)) return;
+      room.session = null;
+      await room.ctx.storage.delete?.('session');
     },
   };
 }
@@ -34,7 +40,18 @@ export class ClassroomRoom {
 
   async fetch(request) {
     await this.load();
-    return handleClassroomRequest(request, durableStore(this));
+    return handleClassroomRequest(request, durableStore(this), Date.now(), {allowExplicitCreate: true});
+  }
+
+  async alarm() {
+    await this.load();
+    if (!this.session) return;
+    if (sessionExpired(this.session, Date.now())) {
+      this.session = null;
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+    await this.ctx.storage.setAlarm(this.session.createdAt + ROOM_TTL_MS);
   }
 }
 
@@ -52,6 +69,12 @@ export default {
       }
       return new Response(JSON.stringify({error: 'busy'}), {
         status: 503,
+        headers: {'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*'},
+      });
+    }
+    if (request.method === 'POST' && /^\/rooms\/[A-HJ-NP-Z2-9]{4}\/?$/.test(url.pathname)) {
+      return new Response(JSON.stringify({error: 'not_found'}), {
+        status: 404,
         headers: {'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*'},
       });
     }

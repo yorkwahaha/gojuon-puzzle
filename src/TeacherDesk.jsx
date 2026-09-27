@@ -5,7 +5,6 @@ import { BOARD_SIZES } from './grid.js';
 import { MODE_BY_ID, SHAPE_CHOICES } from './modes.js';
 import { PUZZLES, puzzleById } from './puzzleImages.js';
 import {
-  clearTeacherSession,
   createRoom,
   endRoom,
   isStudentOnline,
@@ -52,7 +51,6 @@ export default function TeacherDesk() {
   const [live, setLive] = useState(null);
   const [copied, setCopied] = useState(false);
   const [roomError, setRoomError] = useState('');
-  const [now, setNow] = useState(() => Date.now());
   const copyTimer = useRef(null);
   const livePuzzle = puzzleById(live?.config?.puzzleId);
   const liveMode = MODE_BY_ID[live?.config?.modeId];
@@ -60,11 +58,6 @@ export default function TeacherDesk() {
   const liveShape = SHAPE_CHOICES.find((item) => item.id === (live?.config?.shape || 'jigsaw'));
   const studentOnline = isStudentOnline(live);
   const sessionOk = Boolean(room && readTeacherSession()?.code === room);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
 
   useEffect(() => () => {
     if (copyTimer.current) window.clearTimeout(copyTimer.current);
@@ -101,7 +94,6 @@ export default function TeacherDesk() {
           return;
         }
       }
-      clearTeacherSession();
       const code = await createRoom();
       setRoom(code);
       setLive({ phase: 'empty', heartbeat: 0 });
@@ -121,9 +113,7 @@ export default function TeacherDesk() {
   }
 
   async function startFresh() {
-    setLive(null);
     setRoomError('');
-    clearTeacherSession();
     await openRoom(true);
   }
 
@@ -168,6 +158,8 @@ export default function TeacherDesk() {
                 ? '這堂課已結束。學生畫面已鎖定。'
                 : live?.error === 'offline'
                   ? '教室轉送連不上，請檢查網路。'
+                  : live?.error === 'unauthorized'
+                    ? '老師授權已失效，請新開一間教室。'
                   : live?.error === 'not_found'
                     ? '教室已過期，請重新開一間。'
                     : waiting

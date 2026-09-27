@@ -42,7 +42,7 @@ export default function App() {
   const [sizeId, setSizeId] = useState('8x4');
   const [shape, setShape] = useState(() => loadPrefs().shape === 'rect' ? 'rect' : 'jigsaw');
   const [puzzleId, setPuzzleId] = useState(PUZZLES[0].id);
-  const [muted, setMutedState] = useState(false);
+  const [muted, setMutedState] = useState(() => loadPrefs().muted);
   const [seed, setSeed] = useState(1);
   const [room] = useState(boot.room);
   const [roomError, setRoomError] = useState('');
@@ -63,9 +63,17 @@ export default function App() {
     .sort((a, b) => a.ms - b.ms);
   const puzzleClear = isPuzzleClear(levelTimes, puzzle.id);
   const watching = Boolean(room) && !classLock;
+  const playConfig = useMemo(
+    () => ({ modeId, chartId, puzzle, sizeId, seed, shape }),
+    [modeId, chartId, puzzle, seed, shape, sizeId]
+  );
 
   const classLockRef = useRef(classLock);
   classLockRef.current = classLock;
+
+  useEffect(() => {
+    setMuted(muted);
+  }, [muted]);
 
   const lockClass = useCallback((kind) => {
     stopBgm();
@@ -94,6 +102,7 @@ export default function App() {
       if (code === 'ended') lockClass('ended');
       else if (code === 'occupied') lockClass('occupied');
       else if (code === 'not_found') lockClass('missing');
+      else if (code === 'stale_snapshot' || code === 'unauthorized') setRoomError('教室狀態同步失敗，請重新整理後再試。');
       else if (payload?.phase === 'lobby') setRoomError('教室連不上，請再試一次。');
     }
   }, [lockClass, room]);
@@ -121,7 +130,7 @@ export default function App() {
     if (!mode || classLock) return;
     unlockAudio();
     setBgmMuted(loadPrefs().bgmMuted);
-    playBgm(puzzle.bgm || puzzle.name);
+    playBgm(puzzle.bgm);
     setSeed((Date.now() ^ Math.floor(Math.random() * 1e6)) >>> 0);
     setScreen('play');
   }
@@ -163,7 +172,7 @@ export default function App() {
       <div className="app is-play">
         <div className="grain" />
         <PlayBoard
-          config={{ modeId, chartId, puzzle, sizeId, seed, shape }}
+          config={playConfig}
           watching={watching}
           onLiveState={watching ? pushLive : undefined}
           onExit={leavePlay}
@@ -212,6 +221,7 @@ export default function App() {
                   const next = !muted;
                   setMutedState(next);
                   setMuted(next);
+                  savePrefs({ muted: next });
                 }}
               >
                 {muted ? '發音關' : '發音開'}
@@ -224,12 +234,13 @@ export default function App() {
           <div className="setup">
             <div className="setup-block">
               <h2>字表</h2>
-              <div className="seg" role="tablist" aria-label="假名範圍">
+              <div className="seg" role="group" aria-label="假名範圍">
                 {RANGE_ORDER.map((id) => (
                   <button
                     key={id}
                     type="button"
                     className={chartId === id ? 'is-on' : ''}
+                    aria-pressed={chartId === id}
                     onClick={() => pickChart(id)}
                   >
                     {CHARTS[id].name}
@@ -250,6 +261,7 @@ export default function App() {
                         key={item.id}
                         type="button"
                         className={boardId === item.id ? 'is-on' : ''}
+                        aria-pressed={boardId === item.id}
                         disabled={item.id === pieceId}
                         onClick={() => pickBoard(item.id)}
                       >
@@ -266,6 +278,7 @@ export default function App() {
                         key={item.id}
                         type="button"
                         className={pieceId === item.id ? 'is-on' : ''}
+                        aria-pressed={pieceId === item.id}
                         disabled={item.id === boardId}
                         onClick={() => pickPiece(item.id)}
                       >
@@ -279,12 +292,13 @@ export default function App() {
 
             <div className="setup-block">
               <h2>難度</h2>
-              <div className="seg" role="tablist" aria-label="拼圖難度">
+              <div className="seg" role="group" aria-label="拼圖難度">
                 {SHAPE_CHOICES.map((item) => (
                   <button
                     key={item.id}
                     type="button"
                     className={shape === item.id ? 'is-on' : ''}
+                    aria-pressed={shape === item.id}
                     onClick={() => {
                       setShape(item.id);
                       savePrefs({ shape: item.id });
@@ -309,6 +323,7 @@ export default function App() {
                       key={item.id}
                       type="button"
                       className={sizeId === item.id ? 'is-on' : ''}
+                      aria-pressed={sizeId === item.id}
                       disabled={!allowed}
                       onClick={() => setSizeId(item.id)}
                     >
@@ -335,7 +350,7 @@ export default function App() {
                       aria-pressed={puzzleId === item.id}
                       aria-label={opened ? item.name : `未揭關卡 ${index + 1}`}
                     >
-                      <img src={item.url} alt="" />
+                      <img src={item.url} alt="" loading="lazy" decoding="async" />
                       {opened ? <i>過</i> : null}
                     </button>
                   );

@@ -15,6 +15,15 @@ function audioContext() {
 
 export function setMuted(value) {
   muted = value;
+  if (muted && voiceSource) {
+    voiceToken += 1;
+    try {
+      voiceSource.stop();
+    } catch {
+      // already stopped
+    }
+    voiceSource = null;
+  }
 }
 
 export function unlockAudio() {
@@ -99,9 +108,11 @@ export function setBgmMuted(value) {
 
 export function stopBgm() {
   if (!bgm) return;
-  bgm.pause();
-  bgm.src = '';
+  const current = bgm;
   bgm = null;
+  current.pause();
+  current.removeAttribute('src');
+  current.load();
 }
 
 export function resumeBgm() {
@@ -114,13 +125,14 @@ export function playBgm(name) {
   if (!name) return;
   const url = `${import.meta.env.BASE_URL}bgm/${encodeURIComponent(name)}.mp3`;
   try {
-    bgm = new Audio(url);
-    bgm.loop = true;
-    bgm.volume = 0.38;
-    bgm.addEventListener('error', () => {
-      bgm = null;
+    const current = new Audio(url);
+    bgm = current;
+    current.loop = true;
+    current.volume = 0.38;
+    current.addEventListener('error', () => {
+      if (bgm === current) bgm = null;
     });
-    if (!bgmMuted) bgm.play().catch(() => {});
+    if (!bgmMuted) current.play().catch(() => {});
   } catch {
     bgm = null;
   }

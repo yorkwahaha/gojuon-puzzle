@@ -27,10 +27,10 @@ function cloneState(state) {
 }
 
 function read() {
-  if (memoryCache) return memoryCache;
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) {
+      if (memoryCache) return memoryCache;
       memoryCache = cloneState(defaults);
       return memoryCache;
     }
@@ -50,6 +50,7 @@ function read() {
     };
     return memoryCache;
   } catch {
+    if (memoryCache) return memoryCache;
     memoryCache = cloneState(defaults);
     return memoryCache;
   }

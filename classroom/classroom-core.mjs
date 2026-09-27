@@ -5,9 +5,10 @@ export const CONNECTED_MS = 8_000;
 export const ROOM_TTL_MS = 4 * 60 * 60 * 1000;
 export const MAX_SNAPSHOT_BYTES = 16 * 1024;
 
-const PHASES = new Set(['empty', 'lobby', 'play', 'done']);
+const PHASES = new Set(['empty', 'lobby', 'play', 'review', 'done']);
 const CHARTS = new Set(['seion', 'dakuon', 'youon', 'all']);
 const SIZES = new Set(['6x3', '8x4', '10x5', '12x6', '14x7']);
+const SHAPES = new Set(['jigsaw', 'rect']);
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -62,7 +63,41 @@ function sanitizeConfig(raw) {
     chartId,
     puzzleId: clipString(raw.puzzleId, 80),
     sizeId,
+    shape: SHAPES.has(raw.shape) ? raw.shape : 'jigsaw',
     seed: clipInt(raw.seed, 0, 4294967295),
+  };
+}
+
+function sanitizeIdList(raw, max = 100) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, max).map((id) => clipString(id, 32)).filter(Boolean);
+}
+
+function sanitizeReview(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const keys = sanitizeIdList(raw.keys, 8);
+  if (!keys.length) return null;
+  const keySet = new Set(keys);
+  const counts = {};
+  if (raw.counts && typeof raw.counts === 'object' && !Array.isArray(raw.counts)) {
+    for (const [id, count] of Object.entries(raw.counts).slice(0, 100)) {
+      const safeId = clipString(id, 32);
+      if (!safeId) continue;
+      counts[safeId] = clipInt(count, 0, 999) || 0;
+    }
+  }
+  const member = (value) => {
+    const id = clipString(value, 32);
+    return id && keySet.has(id) ? id : null;
+  };
+  return {
+    keys,
+    counts,
+    matched: sanitizeIdList(raw.matched, 8).filter((id) => keySet.has(id)),
+    leftId: member(raw.leftId),
+    rightId: member(raw.rightId),
+    choicePick: clipString(raw.choicePick, 32) || null,
+    wrong: Boolean(raw.wrong),
   };
 }
 
@@ -83,6 +118,9 @@ export function sanitizeSnapshot(raw) {
     wrongId: clipString(raw.wrongId, 32) || null,
     wrongPieceId: clipString(raw.wrongPieceId, 32) || null,
     startedAt: clipInt(raw.startedAt, 0, Number.MAX_SAFE_INTEGER),
+    elapsedMs: clipInt(raw.elapsedMs, 0, Number.MAX_SAFE_INTEGER),
+    revision: clipInt(raw.revision, 0, Number.MAX_SAFE_INTEGER),
+    review: phase === 'review' ? sanitizeReview(raw.review) : null,
   };
 }
 
@@ -98,11 +136,12 @@ export function createSession(now, {code} = {}) {
     endedAt: 0,
     createdAt: now,
     snapshot: null,
+    snapshotRevision: -1,
   };
 }
 
 export function sessionExpired(session, now) {
-  return !session || now - session.createdAt > ROOM_TTL_MS;
+  return !session || now - session.createdAt >= ROOM_TTL_MS;
 }
 
 export function studentConnected(session, now) {
@@ -117,17 +156,27 @@ export function joinStudent(session, now) {
   }
   session.studentToken = generateToken();
   session.studentSeenAt = now;
+  session.snapshot = null;
+  session.snapshotRevision = -1;
   return {studentToken: session.studentToken};
 }
 
 export function putSnapshot(session, token, raw, now) {
   if (!session || sessionExpired(session, now)) return {error: 'not_found', status: 404};
   if (token !== session.studentToken) return {error: 'unauthorized', status: 401};
+  if (session.ended) return {error: 'ended', status: 409};
   const snapshot = sanitizeSnapshot(raw);
   if (!snapshot) return {error: 'invalid_snapshot', status: 400};
+  const currentRevision = Number.isSafeInteger(session.snapshotRevision) ? session.snapshotRevision : -1;
+  const nextRevision = snapshot.revision == null ? currentRevision + 1 : snapshot.revision;
+  if (nextRevision <= currentRevision) {
+    return {error: 'stale_snapshot', status: 409, revision: currentRevision};
+  }
+  snapshot.revision = nextRevision;
   session.snapshot = snapshot;
+  session.snapshotRevision = nextRevision;
   session.studentSeenAt = now;
-  return {ended: session.ended};
+  return {ended: false, revision: nextRevision};
 }
 
 export function teacherView(session, token, now) {
@@ -169,7 +218,7 @@ export class MemoryStore {
     return session;
   }
 
-  purge(now) {
+  async purge(now) {
     for (const [code, session] of this.rooms) {
       if (sessionExpired(session, now)) this.rooms.delete(code);
     }
@@ -199,8 +248,22 @@ async function readJson(request) {
   if (Number.isFinite(length) && length > MAX_SNAPSHOT_BYTES) {
     return {error: json(413, {error: 'too_large'})};
   }
-  const text = await request.text();
-  if (text.length > MAX_SNAPSHOT_BYTES) return {error: json(413, {error: 'too_large'})};
+  if (!request.body) return {value: null};
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = '';
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_SNAPSHOT_BYTES) {
+      await reader.cancel().catch(() => {});
+      return {error: json(413, {error: 'too_large'})};
+    }
+    text += decoder.decode(value, {stream: true});
+  }
+  text += decoder.decode();
   if (!text) return {value: null};
   try {
     return {value: JSON.parse(text)};
@@ -209,12 +272,12 @@ async function readJson(request) {
   }
 }
 
-export async function handleClassroomRequest(request, store, now = Date.now()) {
+export async function handleClassroomRequest(request, store, now = Date.now(), {allowExplicitCreate = false} = {}) {
   if (request.method === 'OPTIONS') return new Response(null, {status: 204, headers: CORS});
 
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
-  store.purge?.(now);
+  await store.purge?.(now);
 
   if (request.method === 'POST' && path === '/rooms') {
     let session;
@@ -234,6 +297,7 @@ export async function handleClassroomRequest(request, store, now = Date.now()) {
   const rest = path.slice(`/rooms/${code}`.length);
 
   if (request.method === 'POST' && rest === '') {
+    if (!allowExplicitCreate) return json(404, {error: 'not_found'});
     if (await store.get(code)) return json(409, {error: 'exists'});
     const session = await store.create(createSession(now, {code}));
     return json(201, {code: session.code, teacherToken: session.teacherToken});
@@ -250,10 +314,13 @@ export async function handleClassroomRequest(request, store, now = Date.now()) {
   }
 
   if (request.method === 'PUT' && rest === '/snapshot') {
+    const token = bearer(request);
+    if (token !== session.studentToken) return json(401, {error: 'unauthorized'});
+    if (session.ended) return json(409, {error: 'ended'});
     const parsed = await readJson(request);
     if (parsed.error) return parsed.error;
-    const result = putSnapshot(session, bearer(request), parsed.value, now);
-    if (result.error) return json(result.status, {error: result.error});
+    const result = putSnapshot(session, token, parsed.value, now);
+    if (result.error) return json(result.status, {error: result.error, revision: result.revision});
     await store.save(session);
     return json(200, result);
   }

@@ -249,49 +249,72 @@ export async function endRoom(room) {
   return result.data;
 }
 
+async function sendSnapshot(room, payload) {
+  let token = readStudentToken(room);
+  if (!token) token = await joinRoom(room);
+
+  const submit = () => {
+    const body = { ...payload, revision: nextSnapshotRevision(room) };
+    return api(`/rooms/${room}/snapshot`, { method: 'PUT', token, body });
+  };
+
+  let result = await submit();
+  if (result.status === 401) {
+    clearStudentToken(room);
+    token = await joinRoom(room);
+    result = await submit();
+  }
+  if (result.status === 409 && result.data?.error === 'stale_snapshot') {
+    syncSnapshotRevision(room, result.data?.revision);
+    result = await submit();
+  }
+  if (result.status === 409 && result.data?.error === 'ended') {
+    markRoomEnded(room);
+    throw Object.assign(new Error('ended'), { code: 'ended', status: 409 });
+  }
+  if (!result.ok) {
+    const error = result.data?.error || 'put_failed';
+    throw Object.assign(new Error(error), { code: error, status: result.status });
+  }
+  syncSnapshotRevision(room, result.data?.revision);
+  return result.data;
+}
+
 export async function patchRoom(room, data) {
   const previous = lastSnapshot.get(room) || {};
   const next = { ...previous, ...data };
   if (data?.config) next.config = { ...(previous.config || {}), ...data.config };
   if (data?.placed) next.placed = [...data.placed];
   lastSnapshot.set(room, next);
-  const previousSend = snapshotQueues.get(room) || Promise.resolve();
-  const send = previousSend.catch(() => {}).then(async () => {
-    let token = readStudentToken(room);
-    if (!token) token = await joinRoom(room);
 
-    const submit = () => {
-      const body = { ...next, revision: nextSnapshotRevision(room) };
-      return api(`/rooms/${room}/snapshot`, { method: 'PUT', token, body });
-    };
-
-    let result = await submit();
-    if (result.status === 401) {
-      clearStudentToken(room);
-      token = await joinRoom(room);
-      result = await submit();
-    }
-    if (result.status === 409 && result.data?.error === 'stale_snapshot') {
-      syncSnapshotRevision(room, result.data?.revision);
-      result = await submit();
-    }
-    if (result.status === 409 && result.data?.error === 'ended') {
-      markRoomEnded(room);
-      throw Object.assign(new Error('ended'), { code: 'ended', status: 409 });
-    }
-    if (!result.ok) {
-      const error = result.data?.error || 'put_failed';
-      throw Object.assign(new Error(error), { code: error, status: result.status });
-    }
-    syncSnapshotRevision(room, result.data?.revision);
-    return result.data;
-  });
-  snapshotQueues.set(room, send);
-  try {
-    return await send;
-  } finally {
-    if (snapshotQueues.get(room) === send) snapshotQueues.delete(room);
+  const pending = snapshotQueues.get(room);
+  if (pending) {
+    pending.latest = next;
+    return pending.promise;
   }
+
+  const job = { latest: null, promise: null };
+  job.promise = (async () => {
+    let payload = next;
+    let lastResult = null;
+    while (payload) {
+      const sending = payload;
+      job.latest = null;
+      try {
+        lastResult = await sendSnapshot(room, sending);
+      } catch (error) {
+        if (!job.latest) throw error;
+      }
+      payload = job.latest;
+    }
+    if (snapshotQueues.get(room) === job) snapshotQueues.delete(room);
+    return lastResult;
+  })().catch((error) => {
+    if (snapshotQueues.get(room) === job) snapshotQueues.delete(room);
+    throw error;
+  });
+  snapshotQueues.set(room, job);
+  return job.promise;
 }
 
 function mapTeacherRoom(data) {
@@ -324,18 +347,25 @@ export function subscribeRoom(room, onData) {
   }
   let stopped = false;
   let timer = 0;
+  let delay = 800;
   const tick = async () => {
     if (stopped) return;
     try {
       const result = await api(`/rooms/${room}`, { token: session.teacherToken });
       if (stopped) return;
-      if (result.ok) onData(mapTeacherRoom(result.data));
-      else onData({ phase: 'empty', heartbeat: 0, error: result.data?.error || 'unavailable' });
+      if (result.ok) {
+        delay = 800;
+        onData(mapTeacherRoom(result.data));
+      } else {
+        delay = Math.min(delay * 2, 8000);
+        onData({ phase: 'empty', heartbeat: 0, error: result.data?.error || 'unavailable' });
+      }
     } catch {
       if (stopped) return;
+      delay = Math.min(delay * 2, 8000);
       onData({ phase: 'empty', heartbeat: 0, error: 'offline' });
     }
-    if (!stopped) timer = window.setTimeout(tick, 800);
+    if (!stopped) timer = window.setTimeout(tick, delay);
   };
   void tick();
   return () => {

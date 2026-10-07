@@ -15,7 +15,7 @@ import {
 import { playComplete, playPickup, playSnap, primeKana, resumeBgm, setBgmMuted, speakKana } from './audio.js';
 import { formatTime, loadPrefs, recordLevelBest, recordMistakes, savePrefs } from './storage.js';
 import { playSnapshot } from './room.js';
-import { choiceOptions, derange, topMissed } from './review.js';
+import { choiceOptions, derange, soundOf, topMissed } from './review.js';
 import Fireworks from './Fireworks.jsx';
 import ReviewDrill from './ReviewDrill.jsx';
 
@@ -25,6 +25,24 @@ function JigStroke({ d }) {
       <path d={d} fill="none" vectorEffect="non-scaling-stroke" />
     </svg>
   );
+}
+
+function PlayClock({ active, frozenMs, readMs }) {
+  const readRef = useRef(readMs);
+  readRef.current = readMs;
+  const [ms, setMs] = useState(() => (frozenMs == null ? readMs() : frozenMs));
+  useEffect(() => {
+    if (frozenMs != null) {
+      setMs(frozenMs);
+      return undefined;
+    }
+    if (!active) return undefined;
+    const tick = () => setMs(readRef.current());
+    tick();
+    const id = window.setInterval(tick, 80);
+    return () => window.clearInterval(id);
+  }, [active, frozenMs]);
+  return <div className="timer" aria-live="off">{formatTime(ms)}</div>;
 }
 
 function SpeakerIcon({ off }) {
@@ -56,9 +74,10 @@ export default function PlayBoard({
   const need = sizeCount(size);
 
   const cells = useMemo(() => {
-    const pool = shuffle(chartCells(chartId), seeded(seed));
+    const source = chartCells(chartId).filter((cell) => !mode?.listen || soundOf(cell.key) === cell.key);
+    const pool = shuffle(source, seeded(seed));
     return pool.slice(0, Math.min(need, pool.length));
-  }, [chartId, need, seed]);
+  }, [chartId, mode?.listen, need, seed]);
 
   const trayOrder = useMemo(
     () => shuffle(cells, seeded(seed + 91)),
@@ -74,6 +93,11 @@ export default function PlayBoard({
   const panRef = useRef(null);
   const ignoreSlotClick = useRef(false);
   const ignoreSlotTimer = useRef(null);
+  const dragPoint = useRef({ x: 0, y: 0 });
+  const ghostRef = useRef(null);
+  const hotSlotRef = useRef(null);
+  const hitRaf = useRef(0);
+  const hitPoint = useRef({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(null);
   const [hotSlotId, setHotSlotId] = useState(null);
   const startedAt = useRef(performance.now());
@@ -96,7 +120,6 @@ export default function PlayBoard({
   const [choicePick, setChoicePick] = useState(null);
   const [reviewWrong, setReviewWrong] = useState(false);
   const [done, setDone] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
   const [imgSize, setImgSize] = useState(null);
   const [bgmOff, setBgmOff] = useState(() => loadPrefs().bgmMuted);
   const [showMenu, setShowMenu] = useState(false);
@@ -143,30 +166,6 @@ export default function PlayBoard({
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    if (spectate && (doneView || reviewing)) {
-      if (liveState?.elapsedMs != null) {
-        setElapsed(liveState.elapsedMs);
-      } else {
-        const start = liveState?.startedAt;
-        setElapsed(start ? Math.max(0, Date.now() - start) : 0);
-      }
-      return undefined;
-    }
-    if (doneView || reviewing) return undefined;
-    const tick = () => {
-      if (spectate) {
-        const start = liveState?.startedAt;
-        setElapsed(start ? Math.max(0, Date.now() - start) : 0);
-        return;
-      }
-      setElapsed(performance.now() - startedAt.current);
-    };
-    tick();
-    const id = window.setInterval(tick, 80);
-    return () => window.clearInterval(id);
-  }, [doneView, liveState?.elapsedMs, liveState?.startedAt, reviewing, spectate]);
 
   const cell = Math.min(stage.w / cols, stage.h / rows);
   const frame = { w: cell * cols, h: cell * rows };
@@ -236,6 +235,7 @@ export default function PlayBoard({
     if (wrongTimer.current) window.clearTimeout(wrongTimer.current);
     if (reviewTimer.current) window.clearTimeout(reviewTimer.current);
     if (ignoreSlotTimer.current) window.clearTimeout(ignoreSlotTimer.current);
+    if (hitRaf.current) window.cancelAnimationFrame(hitRaf.current);
     unbindPiecePointer(panRef.current);
     panRef.current = null;
   }, []);
@@ -265,7 +265,6 @@ export default function PlayBoard({
     settled.current = true;
     const ms = performance.now() - startedAt.current;
     completionMs.current = ms;
-    setElapsed(ms);
     playComplete();
     const weak = topMissed(cells, missCounts);
     if (weak.length) {
@@ -414,7 +413,15 @@ export default function PlayBoard({
   }
 
   function onSlotClick(slot) {
-    if (spectate || ignoreSlotClick.current) return;
+    if (spectate) return;
+    if (ignoreSlotClick.current) {
+      ignoreSlotClick.current = false;
+      if (ignoreSlotTimer.current) {
+        window.clearTimeout(ignoreSlotTimer.current);
+        ignoreSlotTimer.current = null;
+      }
+      return;
+    }
     if (!slot.cell || placed.has(slot.cell.id)) return;
     if (selected) {
       place(selected, slot.cell);
@@ -451,8 +458,29 @@ export default function PlayBoard({
     window.removeEventListener('pointercancel', pan.up, { capture: true });
   }
 
+  function placeGhost(x, y) {
+    dragPoint.current = { x, y };
+    const node = ghostRef.current;
+    if (!node) return;
+    node.style.left = `${x}px`;
+    node.style.top = `${y}px`;
+  }
+
+  function queueHotSlot(x, y) {
+    hitPoint.current = { x, y };
+    if (hitRaf.current) return;
+    hitRaf.current = window.requestAnimationFrame(() => {
+      hitRaf.current = 0;
+      const nextHot = slotIdAt(hitPoint.current.x, hitPoint.current.y);
+      if (nextHot === hotSlotRef.current) return;
+      hotSlotRef.current = nextHot;
+      setHotSlotId(nextHot);
+    });
+  }
+
   function beginPieceDrag(pan, point) {
     pan.type = 'piece';
+    placeGhost(point.clientX, point.clientY);
     playPickup();
     primeKana(pan.cell.key);
     setSelected(pan.cell);
@@ -484,6 +512,7 @@ export default function PlayBoard({
     window.addEventListener('pointercancel', pan.up, { capture: true });
     if (pan.type !== 'piece') return;
     event.preventDefault();
+    placeGhost(event.clientX, event.clientY);
     playPickup();
     primeKana(cellData.key);
     setSelected(cellData);
@@ -524,8 +553,8 @@ export default function PlayBoard({
     if (pan.type !== 'piece') return;
     event.preventDefault();
     if (Math.hypot(dx, dy) > 4) pan.moved = true;
-    setDragging({ cell: pan.cell, x: event.clientX, y: event.clientY });
-    setHotSlotId(slotIdAt(event.clientX, event.clientY));
+    placeGhost(event.clientX, event.clientY);
+    queueHotSlot(event.clientX, event.clientY);
   }
 
   function onPiecePointerUp(event) {
@@ -539,7 +568,12 @@ export default function PlayBoard({
     ignoreSlotTimer.current = window.setTimeout(() => {
       ignoreSlotClick.current = false;
       ignoreSlotTimer.current = null;
-    }, 0);
+    }, 400);
+    if (hitRaf.current) {
+      window.cancelAnimationFrame(hitRaf.current);
+      hitRaf.current = 0;
+    }
+    hotSlotRef.current = null;
     setDragging(null);
     setHotSlotId(null);
     if (pan.type === 'tray') return;
@@ -697,7 +731,17 @@ export default function PlayBoard({
           <span>{CHARTS[chartId].name} · {size.label} · {puzzle.name}</span>
         </div>
         <div className="hud-stats">
-          <div className="timer" aria-live="off">{formatTime(elapsed)}</div>
+          <PlayClock
+            active={!doneView && !reviewing}
+            frozenMs={doneView || reviewing
+              ? (spectate ? (liveState?.elapsedMs ?? 0) : (completionMs.current ?? 0))
+              : null}
+            readMs={() => (
+              spectate
+                ? (liveState?.startedAt ? Math.max(0, Date.now() - liveState.startedAt) : 0)
+                : (performance.now() - startedAt.current)
+            )}
+          />
           <div className="hud-meter" aria-live="polite">
             <b>{placedView.size}</b>
             <small>/{cells.length}{mistakesView ? ` · 誤 ${mistakesView}` : ''}</small>
@@ -705,7 +749,7 @@ export default function PlayBoard({
         </div>
       </header>
 
-      <div className="stage" ref={stageRef}>
+      <div className="stage" ref={stageRef} {...(reviewing ? { inert: '' } : {})}>
         <div
           className="board-frame"
           style={{
@@ -746,7 +790,7 @@ export default function PlayBoard({
                     : isPlaced
                       ? '已揭開'
                       : mode.listen
-                        ? '點擊聽發音'
+                        ? `第 ${slot.row + 1} 列第 ${slot.col + 1} 格，點擊聽發音`
                         : `底盤 ${promptOf(slot.cell, mode)}`
                 }
               >
@@ -758,7 +802,11 @@ export default function PlayBoard({
                     ...faceBackground(slot.col, slot.row, cell, fit, tabFrac),
                   }}
                 >
-                  {isPlaced ? null : <span className="slot-glyph">{promptOf(slot.cell, mode)}</span>}
+                  {isPlaced ? null : (
+                    <span className="slot-glyph" lang={mode.listen || mode.prompt === 'roma' ? undefined : 'ja'}>
+                      {promptOf(slot.cell, mode)}
+                    </span>
+                  )}
                 </span>
                 {isPlaced ? null : <JigStroke d={piecePath(slot.edges, tabs)} />}
               </button>
@@ -767,7 +815,7 @@ export default function PlayBoard({
         </div>
       </div>
 
-      <div className="conveyor">
+      <div className="conveyor" {...(reviewing ? { inert: '' } : {})}>
         <button className="conveyor-arrow" type="button" onClick={() => scrollTray(-1)} aria-label="向左看更多碎片">‹</button>
         <div className="conveyor-main">
           <div
@@ -798,6 +846,7 @@ export default function PlayBoard({
                   onPointerDown={(event) => onPiecePointerDown(event, cellData)}
                   onKeyDown={(event) => onPieceKeyDown(event, cellData)}
                   draggable={false}
+                  aria-pressed={selectedView?.id === cellData.id}
                   aria-label={`碎片 ${answerOf(cellData, mode)}`}
                 >
                   <span className="chip-hit" aria-hidden="true" />
@@ -805,7 +854,9 @@ export default function PlayBoard({
                     className="chip-face"
                     style={{ clipPath: slot ? `url(#jig-${slot.index})` : undefined }}
                   >
-                    <span className="slot-glyph">{answerOf(cellData, mode)}</span>
+                    <span className="slot-glyph" lang={mode.answer === 'roma' ? undefined : 'ja'}>
+                      {answerOf(cellData, mode)}
+                    </span>
                   </span>
                   {slot ? <JigStroke d={piecePath(slot.edges, tabs)} /> : null}
                 </button>
@@ -846,14 +897,17 @@ export default function PlayBoard({
 
       {dragging ? (
         <div
+          ref={ghostRef}
           className={`drag-ghost${mode.answer === 'roma' ? ' is-roma' : ''}`}
-          style={{ left: dragging.x, top: dragging.y }}
+          style={{ left: dragPoint.current.x, top: dragPoint.current.y }}
         >
           <span
             className="chip-face"
             style={{ clipPath: draggingSlot ? `url(#jig-${draggingSlot.index})` : undefined }}
           >
-            <span className="slot-glyph">{answerOf(dragging.cell, mode)}</span>
+            <span className="slot-glyph" lang={mode.answer === 'roma' ? undefined : 'ja'}>
+              {answerOf(dragging.cell, mode)}
+            </span>
           </span>
           {draggingSlot ? <JigStroke d={piecePath(draggingSlot.edges, tabs)} /> : null}
         </div>
@@ -889,7 +943,7 @@ export default function PlayBoard({
             <div className="gallery-card" onClick={(event) => event.stopPropagation()}>
               <p className="stamp">完</p>
               <h2>整張圖揭開了</h2>
-              <p>{formatTime(elapsed)} · {puzzle.name} · {size.label} · 誤放 {mistakesView} 次</p>
+              <p>{formatTime(spectate ? (liveState?.elapsedMs ?? 0) : (completionMs.current ?? 0))} · {puzzle.name} · {size.label} · 誤放 {mistakesView} 次</p>
               {spectate ? null : (
                 <button className="start-btn" type="button" onClick={onExit}>回主頁</button>
               )}

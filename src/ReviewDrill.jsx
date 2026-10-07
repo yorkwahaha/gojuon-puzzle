@@ -1,7 +1,8 @@
+import { useEffect, useRef } from 'react';
 import { answerOf, promptOf } from './kana.js';
 
 function PromptFace({ item, mode, index }) {
-  if (!mode.listen) return <b>{promptOf(item, mode)}</b>;
+  if (!mode.listen) return <b lang={mode.prompt === 'roma' ? undefined : 'ja'}>{promptOf(item, mode)}</b>;
   return (
     <b className="is-listen">
       <svg className="review-speaker" viewBox="0 0 24 24" aria-hidden="true">
@@ -40,9 +41,13 @@ export default function ReviewDrill({
 }) {
   const doneCount = matched.length;
   const total = items.length;
+  const rootRef = useRef(null);
+  useEffect(() => {
+    rootRef.current?.querySelector('button:not([disabled])')?.focus();
+  }, []);
 
   return (
-    <div className="review" role="dialog" aria-modal="true" aria-labelledby="review-title">
+    <div className="review" ref={rootRef} role="dialog" aria-modal="true" aria-labelledby="review-title">
       <div className={`review-card${mode.answer === 'roma' ? ' is-roma' : ''}`}>
         <p className="stamp">習</p>
         <h2 id="review-title">錯字複習</h2>
@@ -80,7 +85,7 @@ export default function ReviewDrill({
                     disabled={spectate || isOk}
                     onClick={() => onPickChoice(item.id)}
                   >
-                    {answerOf(item, mode)}
+                    <span lang={mode.answer === 'roma' ? undefined : 'ja'}>{answerOf(item, mode)}</span>
                   </button>
                 );
               })}
@@ -125,7 +130,7 @@ export default function ReviewDrill({
                     onClick={() => onPickRight(item.id)}
                     aria-label={answerOf(item, mode)}
                   >
-                    <b>{answerOf(item, mode)}</b>
+                    <b lang={mode.answer === 'roma' ? undefined : 'ja'}>{answerOf(item, mode)}</b>
                   </button>
                 );
               })}

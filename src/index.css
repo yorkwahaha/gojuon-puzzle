@@ -12,9 +12,9 @@
   --lacquer: oklch(0.17 0.02 48);
   --shadow: oklch(0.22 0.03 50 / 0.28);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --font-display: 'Shippori Mincho', 'Songti TC', serif;
-  --font-ui: 'Zen Kaku Gothic New', 'Noto Sans TC', sans-serif;
-  --font-kana: 'Klee One', 'Yu Mincho', serif;
+  --font-display: 'Shippori Mincho', 'Songti TC', 'PMingLiU', 'Songti SC', serif;
+  --font-ui: 'Zen Kaku Gothic New', 'PingFang TC', 'Microsoft JhengHei', 'Noto Sans CJK TC', 'Noto Sans TC', sans-serif;
+  --font-kana: 'Klee One', 'Yu Mincho', 'Hiragino Mincho ProN', 'PMingLiU', serif;
 }
 
 * {
@@ -53,7 +53,7 @@ button {
   pointer-events: none;
   position: fixed;
   inset: 0;
-  z-index: 8;
+  z-index: 50;
   opacity: 0.2;
   mix-blend-mode: multiply;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
@@ -1005,7 +1005,7 @@ button {
 
 .chip-hit {
   position: absolute;
-  inset: -14px;
+  inset: -7px;
   z-index: 3;
 }
 
@@ -1016,8 +1016,8 @@ button {
 .drag-ghost {
   position: fixed;
   z-index: 200;
-  width: 80px;
-  height: 80px;
+  width: 74px;
+  height: 74px;
   pointer-events: none;
   transform: translate(-50%, -62%) rotate(-4deg) scale(1.06);
   font-family: var(--font-kana);
@@ -1037,7 +1037,7 @@ button {
 }
 
 .drag-ghost.is-roma {
-  width: 82px;
+  width: 78px;
   font-family: var(--font-display);
   font-size: 16px;
 }
@@ -1376,9 +1376,6 @@ button {
     grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
   }
 
-  .hud-title span {
-    display: none;
-  }
 }
 
 @media (max-width: 640px) {
@@ -1387,10 +1384,21 @@ button {
     align-items: stretch;
   }
 
-  .chip {
+  .chip,
+  .chip.is-roma,
+  .drag-ghost,
+  .drag-ghost.is-roma {
     width: 56px;
     height: 56px;
+  }
+
+  .chip {
     font-size: 20px;
+  }
+
+  .chip.is-roma,
+  .drag-ghost.is-roma {
+    font-size: 13px;
   }
 
   .review-match,

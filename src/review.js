@@ -1,5 +1,11 @@
 import { shuffle } from './jigsaw.js';
 
+const SAME_SOUND = { di: 'ji', du: 'zu', wo: 'o' };
+
+export function soundOf(key) {
+  return SAME_SOUND[key] || key;
+}
+
 export function derange(list, rand) {
   const arr = [...list];
   for (let i = arr.length - 1; i > 0; i -= 1) {
@@ -19,7 +25,8 @@ export function topMissed(cells, counts, limit = REVIEW_LIMIT) {
 }
 
 export function choiceOptions(item, pool, rand, n = 4) {
-  const others = pool.filter((cell) => cell.id !== item.id);
+  const sound = soundOf(item.key);
+  const others = pool.filter((cell) => cell.id !== item.id && soundOf(cell.key) !== sound);
   const picks = shuffle(others, rand).slice(0, Math.max(0, n - 1));
   return shuffle([item, ...picks], rand);
 }

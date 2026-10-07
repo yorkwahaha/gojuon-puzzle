@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { seeded } from '../src/jigsaw.js';
-import { derange } from '../src/review.js';
+import { choiceOptions, derange, soundOf } from '../src/review.js';
 
 function fixedPoints(source, next) {
   return source.filter((item, index) => item.id === next[index]?.id).length;
@@ -15,6 +15,26 @@ test('a two-item review never lines up with the prompts', () => {
     assert.deepEqual(next.map((item) => item.id).sort(), ['a', 'b']);
   }
   assert.deepEqual(items.map((item) => item.id), ['a', 'b']);
+});
+
+test('a spoken prompt does not offer a homophone as another right answer', () => {
+  const pool = [
+    { id: 'ji', key: 'ji' },
+    { id: 'di', key: 'di' },
+    { id: 'zu', key: 'zu' },
+    { id: 'du', key: 'du' },
+    { id: 'a', key: 'a' },
+    { id: 'i', key: 'i' },
+    { id: 'o', key: 'o' },
+    { id: 'wo', key: 'wo' },
+  ];
+  for (let seed = 0; seed < 40; seed += 1) {
+    const options = choiceOptions(pool[0], pool, seeded(seed));
+    assert.equal(options.filter((item) => soundOf(item.key) === 'ji').length, 1);
+    assert.equal(options.some((item) => item.key === 'di'), false);
+  }
+  assert.equal(soundOf('du'), 'zu');
+  assert.equal(soundOf('wo'), 'o');
 });
 
 test('a three-item review keeps every answer off its prompt row', () => {

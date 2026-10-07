@@ -13,18 +13,26 @@ export default function Fireworks() {
 
     const ctx = canvas.getContext('2d');
     const sparks = [];
+    const view = { w: window.innerWidth, h: window.innerHeight };
     let frame = 0;
+    let resizeRaf = 0;
     let running = true;
     let lastBurst = 0;
 
     function resize() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      view.w = window.innerWidth;
+      view.h = window.innerHeight;
+      canvas.width = Math.round(view.w * dpr);
+      canvas.height = Math.round(view.h * dpr);
+      canvas.style.width = `${view.w}px`;
+      canvas.style.height = `${view.h}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
     function burst() {
-      const x = canvas.width * (0.18 + Math.random() * 0.64);
-      const y = canvas.height * (0.12 + Math.random() * 0.42);
+      const x = view.w * (0.18 + Math.random() * 0.64);
+      const y = view.h * (0.12 + Math.random() * 0.42);
       const color = COLORS[Math.floor(Math.random() * COLORS.length)];
       const count = 36 + Math.floor(Math.random() * 20);
       for (let i = 0; i < count; i += 1) {
@@ -45,7 +53,7 @@ export default function Fireworks() {
 
     function tick(now) {
       if (!running) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, view.w, view.h);
       if (now - lastBurst > 280 || sparks.length < 18) {
         burst();
         lastBurst = now;
@@ -73,12 +81,20 @@ export default function Fireworks() {
     resize();
     burst();
     burst();
-    window.addEventListener('resize', resize);
+    const onResize = () => {
+      if (resizeRaf) return;
+      resizeRaf = window.requestAnimationFrame(() => {
+        resizeRaf = 0;
+        resize();
+      });
+    };
+    window.addEventListener('resize', onResize);
     frame = window.requestAnimationFrame(tick);
     return () => {
       running = false;
       window.cancelAnimationFrame(frame);
-      window.removeEventListener('resize', resize);
+      if (resizeRaf) window.cancelAnimationFrame(resizeRaf);
+      window.removeEventListener('resize', onResize);
     };
   }, []);
 

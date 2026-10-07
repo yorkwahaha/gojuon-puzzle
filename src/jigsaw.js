@@ -87,13 +87,13 @@ export function fittedImage(cols, rows, imgW, imgH) {
   const boardAspect = cols / rows;
   const imgAspect = imgW / imgH;
   if (imgAspect > boardAspect) {
-    const drawW = cols;
-    const drawH = cols / imgAspect;
-    return { drawW, drawH, offsetX: 0, offsetY: (rows - drawH) / 2 };
+    const drawH = rows;
+    const drawW = rows * imgAspect;
+    return { drawW, drawH, offsetX: (cols - drawW) / 2, offsetY: 0 };
   }
-  const drawH = rows;
-  const drawW = rows * imgAspect;
-  return { drawW, drawH, offsetX: (cols - drawW) / 2, offsetY: 0 };
+  const drawW = cols;
+  const drawH = cols / imgAspect;
+  return { drawW, drawH, offsetX: 0, offsetY: (rows - drawH) / 2 };
 }
 
 export function faceBackground(col, row, cell, fit, tabFrac = TAB_FRAC) {

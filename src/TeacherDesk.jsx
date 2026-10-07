@@ -121,7 +121,11 @@ export default function TeacherDesk() {
     return (
       <div className="app is-play">
         <div className="grain" />
-        {!studentOnline ? <p className="watch-offline">學生暫時離線</p> : null}
+        {live?.error === 'offline'
+          ? <p className="watch-offline">教室轉送連不上</p>
+          : !studentOnline
+            ? <p className="watch-offline">學生暫時離線</p>
+            : null}
         <PlayBoard
           config={{
             modeId: live.config.modeId,

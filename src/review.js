@@ -6,6 +6,10 @@ export function soundOf(key) {
   return SAME_SOUND[key] || key;
 }
 
+export function withoutHomophones(cells) {
+  return cells.filter((cell) => soundOf(cell.key) === cell.key);
+}
+
 export function derange(list, rand) {
   const arr = [...list];
   for (let i = arr.length - 1; i > 0; i -= 1) {

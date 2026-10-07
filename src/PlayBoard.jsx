@@ -15,7 +15,7 @@ import {
 import { playComplete, playPickup, playSnap, primeKana, resumeBgm, setBgmMuted, speakKana } from './audio.js';
 import { formatTime, loadPrefs, recordLevelBest, recordMistakes, savePrefs } from './storage.js';
 import { playSnapshot } from './room.js';
-import { choiceOptions, derange, soundOf, topMissed } from './review.js';
+import { choiceOptions, derange, topMissed, withoutHomophones } from './review.js';
 import Fireworks from './Fireworks.jsx';
 import ReviewDrill from './ReviewDrill.jsx';
 
@@ -74,7 +74,7 @@ export default function PlayBoard({
   const need = sizeCount(size);
 
   const cells = useMemo(() => {
-    const source = chartCells(chartId).filter((cell) => !mode?.listen || soundOf(cell.key) === cell.key);
+    const source = mode?.listen ? withoutHomophones(chartCells(chartId)) : chartCells(chartId);
     const pool = shuffle(source, seeded(seed));
     return pool.slice(0, Math.min(need, pool.length));
   }, [chartId, mode?.listen, need, seed]);
@@ -91,7 +91,7 @@ export default function PlayBoard({
   const trackRef = useRef(null);
   const barRef = useRef(null);
   const panRef = useRef(null);
-  const ignoreSlotClick = useRef(false);
+  const ignoreSlotClick = useRef(null);
   const ignoreSlotTimer = useRef(null);
   const dragPoint = useRef({ x: 0, y: 0 });
   const ghostRef = useRef(null);
@@ -412,10 +412,19 @@ export default function PlayBoard({
     }, 520);
   }
 
+  function armSlotClickGuard(slotId) {
+    ignoreSlotClick.current = slotId;
+    if (ignoreSlotTimer.current) window.clearTimeout(ignoreSlotTimer.current);
+    ignoreSlotTimer.current = window.setTimeout(() => {
+      ignoreSlotClick.current = null;
+      ignoreSlotTimer.current = null;
+    }, 400);
+  }
+
   function onSlotClick(slot) {
     if (spectate) return;
-    if (ignoreSlotClick.current) {
-      ignoreSlotClick.current = false;
+    if (slot.cell && ignoreSlotClick.current === slot.cell.id) {
+      ignoreSlotClick.current = null;
       if (ignoreSlotTimer.current) {
         window.clearTimeout(ignoreSlotTimer.current);
         ignoreSlotTimer.current = null;
@@ -462,8 +471,8 @@ export default function PlayBoard({
     dragPoint.current = { x, y };
     const node = ghostRef.current;
     if (!node) return;
-    node.style.left = `${x}px`;
-    node.style.top = `${y}px`;
+    node.style.setProperty('--x', `${x}px`);
+    node.style.setProperty('--y', `${y}px`);
   }
 
   function queueHotSlot(x, y) {
@@ -563,12 +572,6 @@ export default function PlayBoard({
     if (pan.type !== 'piece' && pan.type !== 'pending' && pan.type !== 'tray') return;
     unbindPiecePointer(pan);
     panRef.current = null;
-    ignoreSlotClick.current = true;
-    if (ignoreSlotTimer.current) window.clearTimeout(ignoreSlotTimer.current);
-    ignoreSlotTimer.current = window.setTimeout(() => {
-      ignoreSlotClick.current = false;
-      ignoreSlotTimer.current = null;
-    }, 400);
     if (hitRaf.current) {
       window.cancelAnimationFrame(hitRaf.current);
       hitRaf.current = 0;
@@ -589,10 +592,12 @@ export default function PlayBoard({
     const slotCell = cells.find((item) => item.id === id);
     if (slotCell) {
       place(pan.cell, slotCell);
+      armSlotClickGuard(slotCell.id);
       return;
     }
     if (!pan.moved && pan.focusSlot) {
       place(pan.cell, pan.focusSlot);
+      armSlotClickGuard(pan.focusSlot.id);
       return;
     }
     if (!pan.moved && pan.wasSelected) setSelected(null);
@@ -734,7 +739,9 @@ export default function PlayBoard({
           <PlayClock
             active={!doneView && !reviewing}
             frozenMs={doneView || reviewing
-              ? (spectate ? (liveState?.elapsedMs ?? 0) : (completionMs.current ?? 0))
+              ? (spectate
+                ? (liveState?.elapsedMs ?? (liveState?.startedAt ? Math.max(0, Date.now() - liveState.startedAt) : 0))
+                : (completionMs.current ?? 0))
               : null}
             readMs={() => (
               spectate
@@ -899,7 +906,7 @@ export default function PlayBoard({
         <div
           ref={ghostRef}
           className={`drag-ghost${mode.answer === 'roma' ? ' is-roma' : ''}`}
-          style={{ left: dragPoint.current.x, top: dragPoint.current.y }}
+          style={{ '--x': `${dragPoint.current.x}px`, '--y': `${dragPoint.current.y}px` }}
         >
           <span
             className="chip-face"

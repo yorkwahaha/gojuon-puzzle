@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PlayBoard from './PlayBoard.jsx';
 import { CHARTS, RANGE_ORDER, chartCells } from './kana.js';
+import { withoutHomophones } from './review.js';
 import { BOARD_SIZES, sizeCount } from './grid.js';
 import { BOARD_CHOICES, PIECE_CHOICES, SHAPE_CHOICES, modeIdOf, MODE_BY_ID } from './modes.js';
 import { PUZZLES, puzzleById } from './puzzleImages.js';
@@ -14,8 +15,13 @@ import {
   patchRoom,
 } from './room.js';
 
-function largestFit(chartId) {
-  const pool = chartCells(chartId).length;
+function poolCount(chartId, listen) {
+  const cells = chartCells(chartId);
+  return (listen ? withoutHomophones(cells) : cells).length;
+}
+
+function largestFit(chartId, listen) {
+  const pool = poolCount(chartId, listen);
   return [...BOARD_SIZES].reverse().find((size) => sizeCount(size) <= pool) || BOARD_SIZES[0];
 }
 
@@ -66,7 +72,8 @@ export default function App() {
   const puzzle = puzzleById(puzzleId);
   const modeId = modeIdOf(boardId, pieceId);
   const mode = MODE_BY_ID[modeId];
-  const pool = useMemo(() => chartCells(chartId).length, [chartId]);
+  const listen = boardId === 'listen';
+  const pool = useMemo(() => poolCount(chartId, listen), [chartId, listen]);
   const size = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
   const [levelTimes, setLevelTimes] = useState(() => loadPrefs().levels);
   const levelRecords = getLevelRecords(puzzle.id);
@@ -114,18 +121,21 @@ export default function App() {
     }
   }, [lockClass, room]);
 
+  function fitSize(nextChartId, nextListen) {
+    const nextPool = poolCount(nextChartId, nextListen);
+    const current = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
+    if (sizeCount(current) > nextPool) setSizeId(largestFit(nextChartId, nextListen).id);
+  }
+
   function pickChart(id) {
     setChartId(id);
-    const nextPool = chartCells(id).length;
-    const current = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
-    if (sizeCount(current) > nextPool) {
-      setSizeId(largestFit(id).id);
-    }
+    fitSize(id, listen);
   }
 
   function pickBoard(id) {
     if (id === pieceId) return;
     setBoardId(id);
+    fitSize(chartId, id === 'listen');
   }
 
   function pickPiece(id) {
@@ -255,7 +265,7 @@ export default function App() {
                     onClick={() => pickChart(id)}
                   >
                     {CHARTS[id].name}
-                    <small>{chartCells(id).length}</small>
+                    <small>{poolCount(id, listen)}</small>
                   </button>
                 ))}
               </div>

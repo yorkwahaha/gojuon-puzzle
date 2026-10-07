@@ -43,11 +43,15 @@ export default function ReviewDrill({
   const total = items.length;
   const rootRef = useRef(null);
   useEffect(() => {
+    const previous = document.activeElement;
     rootRef.current?.querySelector('button:not([disabled])')?.focus();
+    return () => {
+      if (previous instanceof HTMLElement) previous.focus();
+    };
   }, []);
 
   return (
-    <div className="review" ref={rootRef} role="dialog" aria-modal="true" aria-labelledby="review-title">
+    <div className="review" ref={rootRef} role="dialog" aria-labelledby="review-title">
       <div className={`review-card${mode.answer === 'roma' ? ' is-roma' : ''}`}>
         <p className="stamp">習</p>
         <h2 id="review-title">錯字複習</h2>

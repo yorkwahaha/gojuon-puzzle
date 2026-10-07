@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { seeded } from '../src/jigsaw.js';
-import { choiceOptions, derange, soundOf } from '../src/review.js';
+import { chartCells } from '../src/kana.js';
+import { choiceOptions, derange, soundOf, withoutHomophones } from '../src/review.js';
 
 function fixedPoints(source, next) {
   return source.filter((item, index) => item.id === next[index]?.id).length;
@@ -15,6 +16,13 @@ test('a two-item review never lines up with the prompts', () => {
     assert.deepEqual(next.map((item) => item.id).sort(), ['a', 'b']);
   }
   assert.deepEqual(items.map((item) => item.id), ['a', 'b']);
+});
+
+test('listen mode drops only the three homophone spellings', () => {
+  assert.equal(chartCells('seion').length - withoutHomophones(chartCells('seion')).length, 1);
+  assert.equal(chartCells('dakuon').length - withoutHomophones(chartCells('dakuon')).length, 2);
+  assert.equal(chartCells('all').length - withoutHomophones(chartCells('all')).length, 3);
+  assert.equal(withoutHomophones(chartCells('youon')).length, chartCells('youon').length);
 });
 
 test('a spoken prompt does not offer a homophone as another right answer', () => {

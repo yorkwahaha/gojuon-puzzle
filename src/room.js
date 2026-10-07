@@ -348,6 +348,13 @@ export function subscribeRoom(room, onData) {
   let stopped = false;
   let timer = 0;
   let delay = 800;
+  let last = null;
+  const markOffline = () => {
+    delay = Math.min(delay * 2, 8000);
+    onData(last
+      ? { ...last, error: 'offline' }
+      : { phase: 'empty', heartbeat: 0, error: 'offline' });
+  };
   const tick = async () => {
     if (stopped) return;
     try {
@@ -355,15 +362,18 @@ export function subscribeRoom(room, onData) {
       if (stopped) return;
       if (result.ok) {
         delay = 800;
-        onData(mapTeacherRoom(result.data));
-      } else {
-        delay = Math.min(delay * 2, 8000);
+        last = mapTeacherRoom(result.data);
+        onData(last);
+      } else if (result.status === 401 || result.status === 404) {
+        delay = 800;
+        last = null;
         onData({ phase: 'empty', heartbeat: 0, error: result.data?.error || 'unavailable' });
+      } else {
+        markOffline();
       }
     } catch {
       if (stopped) return;
-      delay = Math.min(delay * 2, 8000);
-      onData({ phase: 'empty', heartbeat: 0, error: 'offline' });
+      markOffline();
     }
     if (!stopped) timer = window.setTimeout(tick, delay);
   };

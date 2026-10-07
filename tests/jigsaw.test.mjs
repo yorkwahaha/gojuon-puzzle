@@ -1,20 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { BOARD_SIZES } from '../src/grid.js';
 import { fittedImage, makeJigsaw, pieceEdges } from '../src/jigsaw.js';
 
 test('the picture covers every cell instead of leaving empty side bars', () => {
-  const narrow = fittedImage(14, 7, 1373, 1000);
-  const wide = fittedImage(14, 7, 2017, 1000);
-  assert.ok(narrow.drawW >= 14);
-  assert.ok(narrow.drawH >= 7);
-  assert.ok(wide.drawW >= 14);
-  assert.ok(wide.drawH >= 7);
+  for (const size of BOARD_SIZES) {
+    for (const [imgW, imgH] of [[1373, 1000], [1778, 1000], [2017, 1000]]) {
+      const fit = fittedImage(size.cols, size.rows, imgW, imgH);
+      assert.ok(fit.drawW >= size.cols, size.id);
+      assert.ok(fit.drawH >= size.rows, size.id);
+    }
+  }
 });
 
 test('neighboring tabs are complements', () => {
-  const cols = 4;
-  const rows = 3;
-  const jig = makeJigsaw(cols, rows, 7);
+  const cols = 14;
+  const rows = 7;
+  const jig = makeJigsaw(cols, rows, 99);
   const corner = pieceEdges(0, 0, cols, rows, jig);
   assert.equal(corner.left, 0);
   assert.equal(corner.top, 0);

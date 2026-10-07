@@ -4,7 +4,11 @@ let bgmMuted = false;
 let voiceSource;
 let voiceToken = 0;
 let bgm;
+let bgmKind = null;
+let ambientGain = null;
+let ambientTimer = 0;
 const AUDIO_ALIAS = { di: 'ji', du: 'zu' };
+const AMBIENT_NOTES = [110, 130.81, 146.83, 164.81, 196, 164.81, 146.83, 130.81];
 const kanaBuffers = new Map();
 
 function audioContext() {
@@ -99,14 +103,66 @@ export function isBgmMuted() {
   return bgmMuted;
 }
 
+function stopAmbient() {
+  if (ambientTimer) {
+    window.clearInterval(ambientTimer);
+    ambientTimer = 0;
+  }
+  if (!ambientGain) return;
+  try {
+    ambientGain.disconnect();
+  } catch {
+    // already disconnected
+  }
+  ambientGain = null;
+}
+
+function startAmbient() {
+  stopAmbient();
+  const ac = audioContext();
+  const master = ac.createGain();
+  master.gain.value = 0.05;
+  master.connect(ac.destination);
+  ambientGain = master;
+  let step = 0;
+  const pluck = () => {
+    if (!ambientGain) return;
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    const filter = ac.createBiquadFilter();
+    osc.type = 'triangle';
+    osc.frequency.value = AMBIENT_NOTES[step % AMBIENT_NOTES.length];
+    step += 1;
+    filter.type = 'lowpass';
+    filter.frequency.value = 720;
+    const t = ac.currentTime;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.4, t + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(master);
+    osc.start(t);
+    osc.stop(t + 1.6);
+  };
+  pluck();
+  ambientTimer = window.setInterval(pluck, 1200);
+}
+
 export function setBgmMuted(value) {
   bgmMuted = value;
-  if (!bgm) return;
-  if (bgmMuted) bgm.pause();
-  else bgm.play().catch(() => {});
+  if (bgm) {
+    if (bgmMuted) bgm.pause();
+    else bgm.play().catch(() => {});
+  }
+  if (bgmKind !== 'ambient') return;
+  if (bgmMuted) stopAmbient();
+  else if (!ambientGain) startAmbient();
 }
 
 export function stopBgm() {
+  bgmKind = null;
+  stopAmbient();
   if (!bgm) return;
   const current = bgm;
   bgm = null;
@@ -116,13 +172,22 @@ export function stopBgm() {
 }
 
 export function resumeBgm() {
-  if (bgmMuted || !bgm) return;
-  bgm.play().catch(() => {});
+  if (bgmMuted) return;
+  if (bgm) {
+    bgm.play().catch(() => {});
+    return;
+  }
+  if (bgmKind === 'ambient' && !ambientGain) startAmbient();
 }
 
 export function playBgm(name) {
   stopBgm();
-  if (!name) return;
+  if (!name) {
+    bgmKind = 'ambient';
+    if (!bgmMuted) startAmbient();
+    return;
+  }
+  bgmKind = 'file';
   const url = `${import.meta.env.BASE_URL}bgm/${encodeURIComponent(name)}.mp3`;
   try {
     const current = new Audio(url);
@@ -130,11 +195,16 @@ export function playBgm(name) {
     current.loop = true;
     current.volume = 0.38;
     current.addEventListener('error', () => {
-      if (bgm === current) bgm = null;
+      if (bgm !== current) return;
+      bgm = null;
+      bgmKind = 'ambient';
+      if (!bgmMuted) startAmbient();
     });
     if (!bgmMuted) current.play().catch(() => {});
   } catch {
     bgm = null;
+    bgmKind = 'ambient';
+    if (!bgmMuted) startAmbient();
   }
 }
 

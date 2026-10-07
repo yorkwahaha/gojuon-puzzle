@@ -1,5 +1,24 @@
 import { answerOf, promptOf } from './kana.js';
 
+function PromptFace({ item, mode, index }) {
+  if (!mode.listen) return <b>{promptOf(item, mode)}</b>;
+  return (
+    <b className="is-listen">
+      <svg className="review-speaker" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9h3.2L12 5.2v13.6L7.2 15H4V9z" fill="currentColor" />
+        <path d="M15.4 9.2a4.2 4.2 0 0 1 0 5.6M17.8 7a7 7 0 0 1 0 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+      <span>{index + 1}</span>
+    </b>
+  );
+}
+
+function promptLabel(item, mode, index, counts) {
+  const misses = `錯 ${counts[item.id] || 0} 次`;
+  if (mode.listen) return `第 ${index + 1} 題，播放讀音，${misses}`;
+  return `${promptOf(item, mode)}，${misses}`;
+}
+
 export default function ReviewDrill({
   items,
   counts,
@@ -42,9 +61,9 @@ export default function ReviewDrill({
                 type="button"
                 className="review-prompt is-solo"
                 onClick={() => onSpeak?.(item)}
-                aria-label={mode.listen ? '播放讀音' : `題目 ${promptOf(item, mode)}`}
+                aria-label={mode.listen ? '第 1 題，播放讀音' : `題目 ${promptOf(item, mode)}`}
               >
-                <b>{promptOf(item, mode)}</b>
+                <PromptFace item={item} mode={mode} index={0} />
                 <small>錯 {counts[item.id] || 0} 次</small>
               </button>
             ))}
@@ -70,7 +89,7 @@ export default function ReviewDrill({
         ) : (
           <div className="review-match">
             <div className="review-col" role="group" aria-label="題目">
-              {leftOrder.map((item) => {
+              {leftOrder.map((item, index) => {
                 const isOk = matched.includes(item.id);
                 const isOn = leftId === item.id;
                 const isBad = wrong && isOn;
@@ -79,13 +98,14 @@ export default function ReviewDrill({
                     key={item.id}
                     type="button"
                     className={`review-tile${isOk ? ' is-ok' : ''}${isOn ? ' is-on' : ''}${isBad ? ' is-wrong' : ''}`}
-                    disabled={spectate || isOk}
+                    disabled={isOk || (spectate && !mode.listen)}
                     onClick={() => {
-                      onPickLeft(item.id);
+                      if (!spectate) onPickLeft(item.id);
+                      else onSpeak?.(item);
                     }}
-                    aria-label={`${promptOf(item, mode)}，錯 ${counts[item.id] || 0} 次`}
+                    aria-label={promptLabel(item, mode, index, counts)}
                   >
-                    <b>{promptOf(item, mode)}</b>
+                    <PromptFace item={item} mode={mode} index={index} />
                     <small>錯 {counts[item.id] || 0} 次</small>
                   </button>
                 );

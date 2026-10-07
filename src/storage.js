@@ -75,14 +75,6 @@ export function savePrefs(patch) {
   return next;
 }
 
-export function bestKey(script, chart, layout) {
-  return `${script}:${chart}:${layout}`;
-}
-
-export function getBest(script, chart, layout) {
-  return read().best[bestKey(script, chart, layout)] ?? null;
-}
-
 export function recordLevelBest(puzzleId, sizeId, ms) {
   const state = read();
   const levels = { ...state.levels };
@@ -96,10 +88,6 @@ export function recordLevelBest(puzzleId, sizeId, ms) {
     write(state);
   }
   return { isBest, best: isBest ? ms : prev };
-}
-
-export function getLevelBest(puzzleId, sizeId) {
-  return read().levels[puzzleId]?.[sizeId] ?? null;
 }
 
 export function getLevelRecords(puzzleId) {

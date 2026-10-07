@@ -13,9 +13,9 @@ import {
   shuffle,
 } from './jigsaw.js';
 import { playComplete, playPickup, playSnap, primeKana, resumeBgm, setBgmMuted, speakKana } from './audio.js';
-import { formatTime, loadPrefs, recordLevelBest, savePrefs } from './storage.js';
+import { formatTime, loadPrefs, recordLevelBest, recordMistakes, savePrefs } from './storage.js';
 import { playSnapshot } from './room.js';
-import { choiceOptions, topMissed } from './review.js';
+import { choiceOptions, derange, topMissed } from './review.js';
 import Fireworks from './Fireworks.jsx';
 import ReviewDrill from './ReviewDrill.jsx';
 
@@ -198,7 +198,7 @@ export default function PlayBoard({
     [cells, reviewIds]
   );
   const rightOrder = useMemo(
-    () => shuffle([...leftOrder], seeded(seed + 404)),
+    () => derange(leftOrder, seeded(seed + 404)),
     [leftOrder, seed]
   );
   const options = useMemo(
@@ -400,6 +400,7 @@ export default function PlayBoard({
     }
     setMistakes((value) => value + 1);
     setMissCounts((prev) => ({ ...prev, [slotCell.id]: (prev[slotCell.id] || 0) + 1 }));
+    recordMistakes([{ id: slotCell.id, kana: slotCell.hira, romaji: slotCell.romaji }]);
     setSelected(null);
     setFocusSlot(null);
     setWrongId(slotCell.id);
@@ -444,19 +445,28 @@ export default function PlayBoard({
 
   function unbindPiecePointer(pan) {
     if (!pan) return;
-    window.removeEventListener('pointermove', pan.move, { capture: true });
+    if (pan.move) window.removeEventListener('pointermove', pan.move, { capture: true });
+    if (!pan.up) return;
     window.removeEventListener('pointerup', pan.up, { capture: true });
     window.removeEventListener('pointercancel', pan.up, { capture: true });
+  }
+
+  function beginPieceDrag(pan, point) {
+    pan.type = 'piece';
+    playPickup();
+    primeKana(pan.cell.key);
+    setSelected(pan.cell);
+    setDragging({ cell: pan.cell, x: point.clientX, y: point.clientY });
   }
 
   function onPiecePointerDown(event, cellData) {
     if (spectate) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.stopPropagation();
-    event.preventDefault();
     unbindPiecePointer(panRef.current);
+    const track = trackRef.current;
     const pan = {
-      type: 'piece',
+      type: event.pointerType === 'mouse' ? 'piece' : 'pending',
       pointerId: event.pointerId,
       cell: cellData,
       x: event.clientX,
@@ -464,6 +474,7 @@ export default function PlayBoard({
       moved: false,
       wasSelected: selected?.id === cellData.id,
       focusSlot,
+      scroll: track?.scrollLeft || 0,
     };
     pan.move = (next) => onPiecePointerMove(next);
     pan.up = (next) => onPiecePointerUp(next);
@@ -471,6 +482,8 @@ export default function PlayBoard({
     window.addEventListener('pointermove', pan.move, { capture: true, passive: false });
     window.addEventListener('pointerup', pan.up, { capture: true });
     window.addEventListener('pointercancel', pan.up, { capture: true });
+    if (pan.type !== 'piece') return;
+    event.preventDefault();
     playPickup();
     primeKana(cellData.key);
     setSelected(cellData);
@@ -487,9 +500,30 @@ export default function PlayBoard({
 
   function onPiecePointerMove(event) {
     const pan = panRef.current;
-    if (!pan || pan.pointerId !== event.pointerId || pan.type !== 'piece') return;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    if (pan.type !== 'piece' && pan.type !== 'pending' && pan.type !== 'tray') return;
+    const dx = event.clientX - pan.x;
+    const dy = event.clientY - pan.y;
+    if (pan.type === 'pending') {
+      if (Math.hypot(dx, dy) < 8) return;
+      const track = trackRef.current;
+      const overflow = Boolean(track && track.scrollWidth > track.clientWidth + 2);
+      event.preventDefault();
+      if (overflow && Math.abs(dx) > Math.abs(dy)) {
+        pan.type = 'tray';
+      } else {
+        beginPieceDrag(pan, event);
+      }
+    }
+    if (pan.type === 'tray') {
+      event.preventDefault();
+      const track = trackRef.current;
+      if (track) track.scrollLeft = pan.scroll - dx;
+      return;
+    }
+    if (pan.type !== 'piece') return;
     event.preventDefault();
-    if (Math.hypot(event.clientX - pan.x, event.clientY - pan.y) > 4) pan.moved = true;
+    if (Math.hypot(dx, dy) > 4) pan.moved = true;
     setDragging({ cell: pan.cell, x: event.clientX, y: event.clientY });
     setHotSlotId(slotIdAt(event.clientX, event.clientY));
   }
@@ -497,6 +531,7 @@ export default function PlayBoard({
   function onPiecePointerUp(event) {
     const pan = panRef.current;
     if (!pan || pan.pointerId !== event.pointerId) return;
+    if (pan.type !== 'piece' && pan.type !== 'pending' && pan.type !== 'tray') return;
     unbindPiecePointer(pan);
     panRef.current = null;
     ignoreSlotClick.current = true;
@@ -507,6 +542,11 @@ export default function PlayBoard({
     }, 0);
     setDragging(null);
     setHotSlotId(null);
+    if (pan.type === 'tray') return;
+    if (pan.type === 'pending') {
+      playPickup();
+      primeKana(pan.cell.key);
+    }
     if (event.type === 'pointercancel') {
       setSelected(pan.cell);
       return;
@@ -562,16 +602,30 @@ export default function PlayBoard({
 
   function onTrackPointerDown(event) {
     if (event.target.closest('.chip')) return;
-    if (panRef.current?.type === 'piece') return;
+    if (panRef.current && panRef.current.type !== 'pan') return;
     const track = trackRef.current;
     if (!track) return;
-    panRef.current = {
+    const pan = {
       type: 'pan',
       pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
       scroll: track.scrollLeft,
     };
+    pan.up = (next) => {
+      if (panRef.current !== pan || next.pointerId !== pan.pointerId) return;
+      window.removeEventListener('pointerup', pan.up, { capture: true });
+      window.removeEventListener('pointercancel', pan.up, { capture: true });
+      panRef.current = null;
+    };
+    panRef.current = pan;
+    window.addEventListener('pointerup', pan.up, { capture: true });
+    window.addEventListener('pointercancel', pan.up, { capture: true });
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // pointer may already have ended
+    }
   }
 
   function onTrackPointerMove(event) {
@@ -583,8 +637,8 @@ export default function PlayBoard({
 
   function onTrackPointerUp(event) {
     const pan = panRef.current;
-    if (!pan || pan.pointerId !== event.pointerId) return;
-    if (pan.type === 'pan') panRef.current = null;
+    if (!pan || pan.type !== 'pan' || pan.pointerId !== event.pointerId) return;
+    pan.up?.(event);
   }
 
   function onTrackWheel(event) {
@@ -594,6 +648,7 @@ export default function PlayBoard({
     track.scrollLeft += event.deltaY + event.deltaX;
   }
 
+  const draggingSlot = dragging ? slots.find((item) => item.cell?.id === dragging.cell.id) : null;
   const fontScale = mode.answer === 'roma' || mode.prompt === 'roma'
     ? Math.max(11, Math.min(cell * 0.28, 22))
     : Math.max(14, Math.min(cell * 0.38, 32));
@@ -796,15 +851,11 @@ export default function PlayBoard({
         >
           <span
             className="chip-face"
-            style={{
-              clipPath: (() => {
-                const slot = slots.find((item) => item.cell?.id === dragging.cell.id);
-                return slot ? `url(#jig-${slot.index})` : undefined;
-              })(),
-            }}
+            style={{ clipPath: draggingSlot ? `url(#jig-${draggingSlot.index})` : undefined }}
           >
             <span className="slot-glyph">{answerOf(dragging.cell, mode)}</span>
           </span>
+          {draggingSlot ? <JigStroke d={piecePath(draggingSlot.edges, tabs)} /> : null}
         </div>
       ) : null}
 
@@ -823,7 +874,7 @@ export default function PlayBoard({
           choicePick={choicePickView}
           wrong={reviewWrongView}
           spectate={spectate}
-          onSpeak={spectate ? undefined : speak}
+          onSpeak={speak}
           onPickLeft={pickReviewLeft}
           onPickRight={pickReviewRight}
           onPickChoice={pickReviewChoice}

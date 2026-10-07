@@ -5,7 +5,7 @@ import { BOARD_SIZES, sizeCount } from './grid.js';
 import { BOARD_CHOICES, PIECE_CHOICES, SHAPE_CHOICES, modeIdOf, MODE_BY_ID } from './modes.js';
 import { PUZZLES, puzzleById } from './puzzleImages.js';
 import { playBgm, setMuted, setBgmMuted, stopBgm, unlockAudio } from './audio.js';
-import { formatTime, loadPrefs, savePrefs } from './storage.js';
+import { formatTime, getLevelRecords, getWeakest, loadPrefs, savePrefs } from './storage.js';
 import {
   HEARTBEAT_MS,
   isRoomEnded,
@@ -33,6 +33,16 @@ function ClassroomLock({ title, message }) {
   );
 }
 
+function ClassroomReconnect() {
+  return (
+    <div className="class-lock" role="status" aria-live="polite">
+      <span className="class-lock-seal">待</span>
+      <h2>正在接回教室</h2>
+      <p>座位還在保留，此頁會自動重試。若你剛關掉分頁，稍候就會進來；若已有別的學生在線，請等對方離開，或請老師另開一間。</p>
+    </div>
+  );
+}
+
 export default function App() {
   const boot = parseRoomFromUrl();
   const [screen, setScreen] = useState('home');
@@ -46,6 +56,7 @@ export default function App() {
   const [seed, setSeed] = useState(1);
   const [room] = useState(boot.room);
   const [roomError, setRoomError] = useState('');
+  const [seatHold, setSeatHold] = useState(false);
   const [classLock, setClassLock] = useState(() => {
     if (boot.room && isRoomEnded(boot.room)) {
       return { title: '老師已結束本次課程', message: '這次遊玩已經鎖定。重新整理也無法繼續。' };
@@ -58,9 +69,8 @@ export default function App() {
   const pool = useMemo(() => chartCells(chartId).length, [chartId]);
   const size = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
   const [levelTimes, setLevelTimes] = useState(() => loadPrefs().levels);
-  const levelRecords = Object.entries(levelTimes[puzzle.id] || {})
-    .map(([id, ms]) => ({ sizeId: id, ms }))
-    .sort((a, b) => a.ms - b.ms);
+  const levelRecords = getLevelRecords(puzzle.id);
+  const weakest = getWeakest(3);
   const puzzleClear = isPuzzleClear(levelTimes, puzzle.id);
   const watching = Boolean(room) && !classLock;
   const playConfig = useMemo(
@@ -81,10 +91,6 @@ export default function App() {
       setClassLock({ title: '老師已結束本次課程', message: '這次遊玩已經鎖定。重新整理也無法繼續。' });
       return;
     }
-    if (kind === 'occupied') {
-      setClassLock({ title: '教室已被占用', message: '這間教室已有學生。請老師另開一間。' });
-      return;
-    }
     if (kind === 'missing') {
       setClassLock({ title: '教室已過期', message: '請老師重新開啟教室，再用新的連結進來。' });
       return;
@@ -96,11 +102,12 @@ export default function App() {
     if (!room || classLockRef.current) return;
     try {
       const result = await patchRoom(room, payload);
+      setSeatHold(false);
       if (result?.ended) lockClass('ended');
     } catch (err) {
       const code = err?.code || err?.message;
       if (code === 'ended') lockClass('ended');
-      else if (code === 'occupied') lockClass('occupied');
+      else if (code === 'occupied') setSeatHold(true);
       else if (code === 'not_found') lockClass('missing');
       else if (code === 'stale_snapshot' || code === 'unauthorized') setRoomError('教室狀態同步失敗，請重新整理後再試。');
       else if (payload?.phase === 'lobby') setRoomError('教室連不上，請再試一次。');
@@ -177,6 +184,7 @@ export default function App() {
           onLiveState={watching ? pushLive : undefined}
           onExit={leavePlay}
         />
+        {seatHold ? <ClassroomReconnect /> : null}
       </div>
     );
   }
@@ -205,6 +213,9 @@ export default function App() {
               }).join('  ·  ')
               : '此關卡尚未過關'}
           </p>
+          {weakest.length ? (
+            <p className="level-record">常錯 {weakest.map((item) => `${item.kana || item.romaji} ${item.count}`).join(' · ')}</p>
+          ) : null}
         </section>
 
         <section className="home-panel">
@@ -364,6 +375,7 @@ export default function App() {
           </button>
         </section>
       </main>
+      {seatHold ? <ClassroomReconnect /> : null}
     </div>
   );
 }

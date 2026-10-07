@@ -1032,6 +1032,10 @@ button {
   color: var(--paper);
 }
 
+.drag-ghost .jig-stroke path {
+  stroke: oklch(0.98 0.02 95 / 0.92);
+}
+
 .drag-ghost.is-roma {
   width: 82px;
   font-family: var(--font-display);
@@ -1278,6 +1282,19 @@ button {
 .review-prompt b {
   display: block;
   font-weight: 600;
+}
+
+.review-tile b.is-listen,
+.review-prompt b.is-listen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.review-speaker {
+  width: 22px;
+  height: 22px;
 }
 
 .review-tile small,

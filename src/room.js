@@ -29,6 +29,8 @@ export function publicGameOrigin() {
   return PUBLIC_GAME_ORIGIN;
 }
 
+// 本機老師仍要交出學生打得開的網址；Zoom 連不到 localhost。
+// 要在本機對測未發布的頁面時，把 VITE_PUBLIC_GAME_ORIGIN 設成 http://localhost:5173。
 export function gameOrigin() {
   if (isLoopbackHost()) return publicGameOrigin();
   const url = new URL(window.location.href);
@@ -88,17 +90,34 @@ async function api(path, { method = 'GET', token, body, timeoutMs = FETCH_MS } =
   }
 }
 
+function studentTokenKey(code) {
+  return `${STUDENT_KEY}:${code}`;
+}
+
 function readStudentToken(code) {
+  const key = studentTokenKey(code);
   try {
-    return sessionStorage.getItem(`${STUDENT_KEY}:${code}`) || '';
+    const saved = localStorage.getItem(key);
+    if (saved) return saved;
+  } catch {
+    // ignore
+  }
+  try {
+    return sessionStorage.getItem(key) || '';
   } catch {
     return '';
   }
 }
 
 function writeStudentToken(code, token) {
+  const key = studentTokenKey(code);
   try {
-    sessionStorage.setItem(`${STUDENT_KEY}:${code}`, token);
+    localStorage.setItem(key, token);
+  } catch {
+    // ignore
+  }
+  try {
+    sessionStorage.setItem(key, token);
   } catch {
     // ignore
   }
@@ -147,8 +166,14 @@ function syncSnapshotRevision(room, revision) {
 }
 
 function clearStudentToken(code) {
+  const key = studentTokenKey(code);
   try {
-    sessionStorage.removeItem(`${STUDENT_KEY}:${code}`);
+    localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+  try {
+    sessionStorage.removeItem(key);
   } catch {
     // ignore
   }

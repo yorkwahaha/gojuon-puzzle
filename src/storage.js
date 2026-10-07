@@ -4,8 +4,6 @@ const defaults = {
   muted: false,
   bgmMuted: false,
   shape: 'jigsaw',
-  hints: true,
-  best: {},
   levels: {},
   mistakes: {},
 };
@@ -13,10 +11,9 @@ const defaults = {
 let memoryCache = null;
 
 function cloneState(state) {
-  if (!state) return { ...defaults, best: {}, levels: {}, mistakes: {} };
+  if (!state) return { ...defaults, levels: {}, mistakes: {} };
   return {
     ...state,
-    best: { ...state.best },
     levels: Object.fromEntries(
       Object.entries(state.levels || {}).map(([k, v]) => [k, { ...v }])
     ),
@@ -39,8 +36,6 @@ function read() {
       muted: Boolean(parsed.muted),
       bgmMuted: Boolean(parsed.bgmMuted),
       shape: parsed.shape === 'rect' ? 'rect' : 'jigsaw',
-      hints: parsed.hints !== false,
-      best: parsed.best && typeof parsed.best === 'object' ? { ...parsed.best } : {},
       levels: parsed.levels && typeof parsed.levels === 'object'
         ? Object.fromEntries(Object.entries(parsed.levels).map(([k, v]) => [k, { ...v }]))
         : {},

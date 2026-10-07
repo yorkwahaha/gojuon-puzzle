@@ -125,25 +125,16 @@ export const CHARTS = {
   seion: {
     id: 'seion',
     name: '清音',
-    kicker: 'あ行から',
-    blurb: '五十音的骨架。先把這盤排好，後面的濁音與拗音才站得住。',
-    columns: 5,
     rows: SEION_ROWS,
   },
   dakuon: {
     id: 'dakuon',
     name: '濁音',
-    kicker: '゛ ゜',
-    blurb: 'がざだば，再加半濁音ぱ行。相同骨架，聲音變濁。',
-    columns: 5,
     rows: DAKUON_ROWS,
   },
   youon: {
     id: 'youon',
     name: '拗音',
-    kicker: 'ゃゅょ',
-    blurb: '小寫ゃゅょ黏在い段上。三列拼盤，一塊拼圖兩個假名。',
-    columns: 3,
     rows: YOUON_ROWS,
   },
 };
@@ -154,8 +145,6 @@ export const RANGE_ORDER = ['seion', 'dakuon', 'youon', 'all'];
 CHARTS.all = {
   id: 'all',
   name: '全部',
-  kicker: '清濁拗',
-  blurb: '清音、濁音與拗音一次揭開整張圖。',
 };
 
 export function glyphFor(key, script) {
@@ -171,14 +160,6 @@ export function promptOf(cell, mode) {
 
 export function answerOf(cell, mode) {
   return glyphFor(cell.key, mode.answer);
-}
-
-export function romajiFor(key) {
-  return ROMAJI[key];
-}
-
-export function speakGlyph(key) {
-  return HIRA[key];
 }
 
 export function chartCells(chartId) {
@@ -203,10 +184,4 @@ export function chartCells(chartId) {
     });
   });
   return cells;
-}
-
-export function previewGlyphs(chartId, script = 'hira') {
-  return chartCells(chartId)
-    .slice(0, 6)
-    .map((cell) => glyphFor(cell.key, script));
 }

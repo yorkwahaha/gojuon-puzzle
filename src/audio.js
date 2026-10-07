@@ -99,10 +99,6 @@ export function playComplete() {
   });
 }
 
-export function isBgmMuted() {
-  return bgmMuted;
-}
-
 function stopAmbient() {
   if (ambientTimer) {
     window.clearInterval(ambientTimer);

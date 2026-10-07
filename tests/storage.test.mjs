@@ -25,8 +25,6 @@ test('saving a preference does not overwrite progress written by another tab', (
     muted: false,
     bgmMuted: false,
     shape: 'jigsaw',
-    hints: true,
-    best: {},
     levels: {'./puzzles/demo.webp': {'8x4': 1234}},
     mistakes: {},
   }));
@@ -55,8 +53,6 @@ test('temporary localStorage eviction does not destroy the in-memory session pro
     muted: false,
     bgmMuted: false,
     shape: 'jigsaw',
-    hints: true,
-    best: {},
     levels: {'./puzzles/demo.webp': {'10x5': 31000}},
     mistakes: {},
   }));

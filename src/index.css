@@ -1,13 +1,10 @@
 :root {
   --paper: oklch(0.93 0.018 88);
-  --paper-2: oklch(0.88 0.024 82);
   --ink: oklch(0.2 0.02 48);
   --ink-soft: oklch(0.44 0.02 55);
   --ink-faint: oklch(0.6 0.018 70);
   --vermilion: oklch(0.52 0.18 32);
   --vermilion-deep: oklch(0.42 0.16 30);
-  --wood: oklch(0.42 0.06 58);
-  --wood-deep: oklch(0.28 0.04 50);
   --tile: oklch(0.97 0.012 95);
   --lacquer: oklch(0.17 0.02 48);
   --shadow: oklch(0.22 0.03 50 / 0.28);
@@ -1145,34 +1142,6 @@ button {
   50% { filter: drop-shadow(0 0 42px oklch(0.92 0.1 80 / 0.55)); }
 }
 
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background: oklch(0.28 0.03 50 / 0.5);
-  pointer-events: auto;
-}
-
-.sheet {
-  width: min(520px, 100%);
-  max-height: calc(100dvh - 48px);
-  overflow: auto;
-  padding: 28px 24px 22px;
-  background: var(--paper);
-  text-align: center;
-  box-shadow: 0 24px 60px var(--shadow);
-}
-
-.reveal-shot {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  margin-bottom: 14px;
-  background: center / cover no-repeat var(--wood-deep);
-}
-
 .stamp {
   display: inline-grid;
   place-items: center;
@@ -1184,23 +1153,6 @@ button {
   font-size: 28px;
   font-weight: 700;
   transform: rotate(-12deg);
-}
-
-.sheet h2 {
-  margin: 0 0 6px;
-  font-size: 28px;
-  letter-spacing: 0.16em;
-}
-
-.sheet p {
-  margin: 0 0 18px;
-  color: var(--ink-soft);
-}
-
-.sheet-actions {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
 }
 
 .play.is-rect .slot-face,
@@ -1390,11 +1342,6 @@ button {
 }
 
 @media (max-width: 640px) {
-  .home-top {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .chip,
   .chip.is-roma,
   .drag-ghost,

@@ -22,6 +22,9 @@ export const PUZZLES = [
 ];
 
 export function puzzleById(id) {
-  return PUZZLES.find((item) => item.id === id) || PUZZLES[0];
+  if (!id) return PUZZLES[0];
+  return PUZZLES.find((item) => item.id === id)
+    || PUZZLES.find((item) => item.id.endsWith(`/${id}`))
+    || PUZZLES[0];
 }
 

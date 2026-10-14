@@ -1,24 +1,30 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import PlayBoard from './PlayBoard.jsx';
+import LessonSetup, { fittedSize } from './LessonSetup.jsx';
 import { CHARTS } from './kana.js';
 import { BOARD_SIZES } from './grid.js';
-import { MODE_BY_ID, SHAPE_CHOICES } from './modes.js';
-import { PUZZLES, puzzleById } from './puzzleImages.js';
+import { MODE_BY_ID, SHAPE_CHOICES, modeIdOf } from './modes.js';
+import { puzzleById } from './puzzleImages.js';
 import {
   createRoom,
   endRoom,
   isStudentOnline,
+  lessonParams,
   linksFor,
+  parseLesson,
   parseRoomFromUrl,
   readTeacherSession,
   subscribeRoom,
 } from './room.js';
 
-function setTeacherUrl(room) {
+function setTeacherUrl(room, lesson) {
   const url = new URL(window.location.href);
   url.hash = '';
   url.search = '';
   if (room) url.searchParams.set('room', room);
+  if (lesson) {
+    for (const [key, value] of lessonParams(lesson)) url.searchParams.set(key, value);
+  }
   window.history.replaceState({}, '', url);
 }
 
@@ -43,15 +49,35 @@ function EndClassControls({ ended, onEnd }) {
 
 export default function TeacherDesk() {
   const boot = parseRoomFromUrl();
+  const bootLesson = parseLesson();
+  const bootMode = bootLesson ? bootLesson.modeId.split('-') : [];
   const stored = readTeacherSession();
   const [room, setRoom] = useState(() => {
     if (stored && (!boot.room || stored.code === boot.room)) return stored.code;
     return boot.room;
   });
+  const [boardId, setBoardId] = useState(bootMode[0] || 'kata');
+  const [pieceId, setPieceId] = useState(bootMode[1] || 'hira');
+  const [chartId, setChartId] = useState(bootLesson?.chartId || 'seion');
+  const [sizeId, setSizeId] = useState(() => fittedSize(
+    bootLesson?.chartId || 'seion',
+    (bootMode[0] || 'kata') === 'listen',
+    bootLesson?.sizeId || '8x4',
+  ));
+  const [shape, setShape] = useState(bootLesson?.shape || 'jigsaw');
+  const [puzzleId, setPuzzleId] = useState(() => puzzleById(bootLesson?.puzzleId).id);
   const [live, setLive] = useState(null);
   const [copied, setCopied] = useState(false);
   const [roomError, setRoomError] = useState('');
   const copyTimer = useRef(null);
+  const lesson = useMemo(() => ({
+    modeId: modeIdOf(boardId, pieceId),
+    chartId,
+    puzzleId,
+    sizeId,
+    shape,
+  }), [boardId, pieceId, chartId, puzzleId, sizeId, shape]);
+  const assignedPuzzle = puzzleById(puzzleId);
   const livePuzzle = puzzleById(live?.config?.puzzleId);
   const liveMode = MODE_BY_ID[live?.config?.modeId];
   const liveSize = BOARD_SIZES.find((item) => item.id === live?.config?.sizeId);
@@ -65,13 +91,33 @@ export default function TeacherDesk() {
 
   useEffect(() => {
     if (!room || !sessionOk) return undefined;
-    setTeacherUrl(room);
     return subscribeRoom(room, setLive);
   }, [room, sessionOk]);
 
+  useEffect(() => {
+    if (!room || !sessionOk) return;
+    setTeacherUrl(room, lesson);
+  }, [room, sessionOk, lesson]);
+
+  function pickChart(id) {
+    setChartId(id);
+    setSizeId((current) => fittedSize(id, boardId === 'listen', current));
+  }
+
+  function pickBoard(id) {
+    if (id === pieceId) return;
+    setBoardId(id);
+    setSizeId((current) => fittedSize(chartId, id === 'listen', current));
+  }
+
+  function pickPiece(id) {
+    if (id === boardId) return;
+    setPieceId(id);
+  }
+
   async function copyStudentLink() {
     if (!room) return;
-    const { student } = linksFor(room);
+    const { student } = linksFor(room, lesson);
     try {
       await navigator.clipboard.writeText(student);
     } catch {
@@ -90,14 +136,12 @@ export default function TeacherDesk() {
         if (existing) {
           setRoom(existing.code);
           setLive({ phase: 'empty', heartbeat: 0 });
-          setTeacherUrl(existing.code);
           return;
         }
       }
       const code = await createRoom();
       setRoom(code);
       setLive({ phase: 'empty', heartbeat: 0 });
-      setTeacherUrl(code);
     } catch {
       setRoomError('教室沒有開成，請確認網路後再試一次。');
     }
@@ -167,15 +211,40 @@ export default function TeacherDesk() {
                   : live?.error === 'not_found'
                     ? '教室已過期，請重新開一間。'
                     : waiting
-                      ? '把下面連結傳給學生，等他進來。'
+                      ? '選好這一關，再把連結傳給學生。'
                       : studentOnline
-                        ? '學生正在選關。'
+                        ? '學生已進來，還沒開始。'
                         : '學生暫時離線。'}
             </p>
             {ended ? null : (
               <>
-                <p className="watch-url">{linksFor(room).student}</p>
-                <p className="watch-hint">貼進 Zoom 即可。學生用自己的網路打開正式站，不必同一 Wi-Fi。</p>
+                <p className="watch-lobby">
+                  學生將玩 {CHARTS[chartId]?.name}
+                  {' · '}
+                  {MODE_BY_ID[lesson.modeId]?.title}
+                  {' · '}
+                  {SHAPE_CHOICES.find((item) => item.id === shape)?.label}
+                  {' · '}
+                  {BOARD_SIZES.find((item) => item.id === sizeId)?.label}
+                  {' · '}
+                  {assignedPuzzle.name}
+                </p>
+                <LessonSetup
+                  chartId={chartId}
+                  boardId={boardId}
+                  pieceId={pieceId}
+                  shape={shape}
+                  sizeId={sizeId}
+                  puzzleId={puzzleId}
+                  onChart={pickChart}
+                  onBoard={pickBoard}
+                  onPiece={pickPiece}
+                  onShape={setShape}
+                  onSize={setSizeId}
+                  onPuzzle={setPuzzleId}
+                />
+                <p className="watch-url">{linksFor(room, lesson).student}</p>
+                <p className="watch-hint">貼進 Zoom 即可。學生不能改關卡和圖片。改了選項之後，要把新連結再傳一次。</p>
               </>
             )}
             {inLobby ? (
@@ -211,7 +280,21 @@ export default function TeacherDesk() {
         <section className="home-panel watch-panel">
           <p className="kicker">一對一教室</p>
           <h1>老師觀戰</h1>
-          <p className="watch-hint">教室只收一位學生。開啟後把學生連結貼進 Zoom。遊戲畫面不會出現這個入口。</p>
+          <p className="watch-hint">先選好這一關和圖片。開啟後把學生連結貼進 Zoom，學生不能再改。</p>
+          <LessonSetup
+            chartId={chartId}
+            boardId={boardId}
+            pieceId={pieceId}
+            shape={shape}
+            sizeId={sizeId}
+            puzzleId={puzzleId}
+            onChart={pickChart}
+            onBoard={pickBoard}
+            onPiece={pickPiece}
+            onShape={setShape}
+            onSize={setSizeId}
+            onPuzzle={setPuzzleId}
+          />
           {roomError ? <p className="watch-error">{roomError}</p> : null}
           <div className="watch-actions">
             <button className="start-btn" type="button" onClick={() => openRoom(false)}>開啟教室</button>

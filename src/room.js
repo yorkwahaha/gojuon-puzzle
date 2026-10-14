@@ -1,9 +1,15 @@
+import { BOARD_SIZES } from './grid.js';
+import { RANGE_ORDER } from './kana.js';
+import { MODE_BY_ID } from './modes.js';
+
 const PRODUCTION_API = 'https://gojuon-puzzle-classroom.yorkwahaha.workers.dev';
 const PUBLIC_GAME_ORIGIN = 'https://yorkwahaha.github.io/gojuon-puzzle';
 const STUDENT_KEY = 'gojuon_classroom_student';
 const TEACHER_KEY = 'gojuon_classroom_teacher';
 const CODE_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/;
 const FETCH_MS = 8000;
+const CHARTS = new Set(RANGE_ORDER);
+const SIZES = new Set(BOARD_SIZES.map((item) => item.id));
 
 export const HEARTBEAT_MS = 1500;
 export const OFFLINE_MS = 8000;
@@ -38,11 +44,43 @@ export function gameOrigin() {
   return `${url.origin}${path.replace(/\/+$/, '')}`;
 }
 
-export function linksFor(room) {
+export function lessonParams(lesson) {
+  const params = new URLSearchParams();
+  params.set('chart', lesson.chartId);
+  params.set('mode', lesson.modeId);
+  params.set('size', lesson.sizeId);
+  params.set('shape', lesson.shape);
+  params.set('puzzle', String(lesson.puzzleId).split('/').pop());
+  return params;
+}
+
+// ponytail: lesson rides in the link, so a student can edit the query; put it on the room session if that has to be enforced.
+export function parseLesson(search = window.location.search) {
+  const query = new URLSearchParams(search);
+  const puzzle = query.get('puzzle');
+  const mode = query.get('mode');
+  if (!puzzle || !mode) return null;
+  return {
+    chartId: CHARTS.has(query.get('chart')) ? query.get('chart') : 'seion',
+    modeId: MODE_BY_ID[mode] ? mode : 'kata-hira',
+    sizeId: SIZES.has(query.get('size')) ? query.get('size') : '8x4',
+    shape: query.get('shape') === 'rect' ? 'rect' : 'jigsaw',
+    puzzleId: puzzle.slice(0, 120),
+  };
+}
+
+export function linksFor(room, lesson) {
   const origin = gameOrigin();
-  const student = `${origin}/?room=${encodeURIComponent(room)}`;
+  const params = new URLSearchParams({ room });
+  if (lesson) {
+    for (const [key, value] of lessonParams(lesson)) params.set(key, value);
+  }
+  const student = `${origin}/?${params}`;
   const teacher = new URL('teacher.html', `${origin}/`);
   teacher.searchParams.set('room', room);
+  if (lesson) {
+    for (const [key, value] of lessonParams(lesson)) teacher.searchParams.set(key, value);
+  }
   return { student, teacher: teacher.toString() };
 }
 

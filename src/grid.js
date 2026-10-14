@@ -9,3 +9,9 @@ export const BOARD_SIZES = [
 export function sizeCount(size) {
   return size.cols * size.rows;
 }
+
+export function fitSizeId(sizeId, pool) {
+  const current = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
+  if (sizeCount(current) <= pool) return current.id;
+  return ([...BOARD_SIZES].reverse().find((size) => sizeCount(size) <= pool) || BOARD_SIZES[0]).id;
+}

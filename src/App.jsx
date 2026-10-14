@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PlayBoard from './PlayBoard.jsx';
-import { CHARTS, RANGE_ORDER, chartCells } from './kana.js';
-import { withoutHomophones } from './review.js';
+import LessonSetup, { fittedSize } from './LessonSetup.jsx';
 import { BOARD_SIZES, sizeCount } from './grid.js';
-import { BOARD_CHOICES, PIECE_CHOICES, SHAPE_CHOICES, modeIdOf, MODE_BY_ID } from './modes.js';
+import { modeIdOf, MODE_BY_ID } from './modes.js';
 import { PUZZLES, puzzleById } from './puzzleImages.js';
 import { playBgm, setMuted, setBgmMuted, stopBgm, unlockAudio } from './audio.js';
 import { formatTime, getLevelRecords, getWeakest, loadPrefs, savePrefs } from './storage.js';
@@ -11,19 +10,10 @@ import {
   HEARTBEAT_MS,
   isRoomEnded,
   lobbySnapshot,
+  parseLesson,
   parseRoomFromUrl,
   patchRoom,
 } from './room.js';
-
-function poolCount(chartId, listen) {
-  const cells = chartCells(chartId);
-  return (listen ? withoutHomophones(cells) : cells).length;
-}
-
-function largestFit(chartId, listen) {
-  const pool = poolCount(chartId, listen);
-  return [...BOARD_SIZES].reverse().find((size) => sizeCount(size) <= pool) || BOARD_SIZES[0];
-}
 
 function isPuzzleClear(levelTimes, puzzleId) {
   return Object.keys(levelTimes[puzzleId] || {}).length > 0;
@@ -51,13 +41,22 @@ function ClassroomReconnect() {
 
 export default function App() {
   const boot = parseRoomFromUrl();
+  const lesson = boot.room ? parseLesson() : null;
+  const lessonMode = lesson ? lesson.modeId.split('-') : [];
   const [screen, setScreen] = useState('home');
-  const [boardId, setBoardId] = useState('kata');
-  const [pieceId, setPieceId] = useState('hira');
-  const [chartId, setChartId] = useState('seion');
-  const [sizeId, setSizeId] = useState('8x4');
-  const [shape, setShape] = useState(() => loadPrefs().shape === 'rect' ? 'rect' : 'jigsaw');
-  const [puzzleId, setPuzzleId] = useState(PUZZLES[0].id);
+  const [boardId, setBoardId] = useState(lessonMode[0] || 'kata');
+  const [pieceId, setPieceId] = useState(lessonMode[1] || 'hira');
+  const [chartId, setChartId] = useState(lesson?.chartId || 'seion');
+  const [sizeId, setSizeId] = useState(() => fittedSize(
+    lesson?.chartId || 'seion',
+    (lessonMode[0] || 'kata') === 'listen',
+    lesson?.sizeId || '8x4',
+  ));
+  const [shape, setShape] = useState(() => {
+    if (lesson?.shape) return lesson.shape;
+    return loadPrefs().shape === 'rect' ? 'rect' : 'jigsaw';
+  });
+  const [puzzleId, setPuzzleId] = useState(() => (lesson ? puzzleById(lesson.puzzleId).id : PUZZLES[0].id));
   const [muted, setMutedState] = useState(() => loadPrefs().muted);
   const [seed, setSeed] = useState(1);
   const [room] = useState(boot.room);
@@ -73,8 +72,8 @@ export default function App() {
   const modeId = modeIdOf(boardId, pieceId);
   const mode = MODE_BY_ID[modeId];
   const listen = boardId === 'listen';
-  const pool = useMemo(() => poolCount(chartId, listen), [chartId, listen]);
   const size = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
+  const locked = Boolean(lesson);
   const [levelTimes, setLevelTimes] = useState(() => loadPrefs().levels);
   const levelRecords = getLevelRecords(puzzle.id);
   const weakest = getWeakest(3);
@@ -121,25 +120,20 @@ export default function App() {
     }
   }, [lockClass, room]);
 
-  function fitSize(nextChartId, nextListen) {
-    const nextPool = poolCount(nextChartId, nextListen);
-    const current = BOARD_SIZES.find((item) => item.id === sizeId) || BOARD_SIZES[0];
-    if (sizeCount(current) > nextPool) setSizeId(largestFit(nextChartId, nextListen).id);
-  }
-
   function pickChart(id) {
+    if (locked) return;
     setChartId(id);
-    fitSize(id, listen);
+    setSizeId((current) => fittedSize(id, listen, current));
   }
 
   function pickBoard(id) {
-    if (id === pieceId) return;
+    if (locked || id === pieceId) return;
     setBoardId(id);
-    fitSize(chartId, id === 'listen');
+    setSizeId((current) => fittedSize(chartId, id === 'listen', current));
   }
 
   function pickPiece(id) {
-    if (id === boardId) return;
+    if (locked || id === boardId) return;
     setPieceId(id);
   }
 
@@ -252,133 +246,28 @@ export default function App() {
           </header>
           {roomError ? <p className="watch-error">{roomError}</p> : null}
 
-          <div className="setup">
-            <div className="setup-block">
-              <h2>字表</h2>
-              <div className="seg" role="group" aria-label="假名範圍">
-                {RANGE_ORDER.map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={chartId === id ? 'is-on' : ''}
-                    aria-pressed={chartId === id}
-                    onClick={() => pickChart(id)}
-                  >
-                    {CHARTS[id].name}
-                    <small>{poolCount(id, listen)}</small>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="setup-block">
-              <h2>讀法</h2>
-              <div className="pair-select">
-                <div className="field">
-                  <span>盤面</span>
-                  <div className="choice" role="group" aria-label="盤面">
-                    {BOARD_CHOICES.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={boardId === item.id ? 'is-on' : ''}
-                        aria-pressed={boardId === item.id}
-                        disabled={item.id === pieceId}
-                        onClick={() => pickBoard(item.id)}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="field">
-                  <span>拼圖</span>
-                  <div className="choice" role="group" aria-label="拼圖">
-                    {PIECE_CHOICES.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={pieceId === item.id ? 'is-on' : ''}
-                        aria-pressed={pieceId === item.id}
-                        disabled={item.id === boardId}
-                        onClick={() => pickPiece(item.id)}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="setup-block">
-              <h2>難度</h2>
-              <div className="seg" role="group" aria-label="拼圖難度">
-                {SHAPE_CHOICES.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={shape === item.id ? 'is-on' : ''}
-                    aria-pressed={shape === item.id}
-                    onClick={() => {
-                      setShape(item.id);
-                      savePrefs({ shape: item.id });
-                    }}
-                  >
-                    {item.label}
-                    <small>{item.hint}</small>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="setup-block">
-              <h2>規格</h2>
-              <div className="size-row" role="group" aria-label="盤面大小">
-                {BOARD_SIZES.map((item) => {
-                  const count = sizeCount(item);
-                  const allowed = count <= pool;
-                  const best = levelTimes[puzzle.id]?.[item.id];
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={sizeId === item.id ? 'is-on' : ''}
-                      aria-pressed={sizeId === item.id}
-                      disabled={!allowed}
-                      onClick={() => setSizeId(item.id)}
-                    >
-                      <b>{item.label}</b>
-                      <small>{allowed ? `${count} 片` : '超出'}</small>
-                      {best != null ? <em>{formatTime(best)}</em> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="setup-block">
-              <h2>藏品</h2>
-              <div className="level-rail">
-                {PUZZLES.map((item, index) => {
-                  const opened = isPuzzleClear(levelTimes, item.id);
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`level-card${puzzleId === item.id ? ' is-on' : ''}${opened ? ' is-clear' : ' is-fogged'}`}
-                      onClick={() => setPuzzleId(item.id)}
-                      aria-pressed={puzzleId === item.id}
-                      aria-label={opened ? item.name : `未揭關卡 ${index + 1}`}
-                    >
-                      <img src={item.url} alt="" loading="lazy" decoding="async" />
-                      {opened ? <i>過</i> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          {locked ? (
+            <p className="watch-hint">這一關和圖片由老師指定，直接開始即可。</p>
+          ) : (
+            <LessonSetup
+              chartId={chartId}
+              boardId={boardId}
+              pieceId={pieceId}
+              shape={shape}
+              sizeId={sizeId}
+              puzzleId={puzzleId}
+              levelTimes={levelTimes}
+              onChart={pickChart}
+              onBoard={pickBoard}
+              onPiece={pickPiece}
+              onShape={(id) => {
+                setShape(id);
+                savePrefs({ shape: id });
+              }}
+              onSize={setSizeId}
+              onPuzzle={setPuzzleId}
+            />
+          )}
 
           <button className="start-btn" type="button" onClick={start} disabled={!mode}>
             開始揭霧
